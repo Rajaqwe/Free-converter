@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PDF + AI → PLT Batch Cutter v17</title>
+<style>
+:root{--bg:#0a0a0a;--panel:#11110f;--line:#2b2b28;--text:#f6f3eb;--muted:#aaa89f;--accent:#e8ff3f;--red:#ff655f}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,Helvetica,sans-serif}
+body{min-height:100vh} .nav{position:sticky;top:0;z-index:5;background:rgba(10,10,10,.88);backdrop-filter:blur(14px);border-bottom:1px solid #222}
+.navin{max-width:1180px;margin:auto;padding:16px 22px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.brand{display:flex;align-items:center;gap:12px}.logo{width:38px;height:38px;border:1px solid #777;border-radius:50%;display:grid;place-items:center;font-weight:800}.brand b{font-size:15px}.brand small{display:block;color:var(--muted);font-size:10px;margin-top:4px;letter-spacing:.08em;text-transform:uppercase}
+.wrap{max-width:1180px;margin:auto;padding:28px 22px 70px}.drop{min-height:270px;border:1px solid #41413c;border-radius:22px;background:linear-gradient(145deg,#12120f,#0f0f0d);display:grid;place-items:center;text-align:center;cursor:pointer;transition:.25s}.drop:hover,.drop.over{border-color:var(--accent);transform:translateY(-2px)}
+.drop strong{font-size:clamp(34px,5vw,58px);font-weight:500;letter-spacing:-.04em}.drop p{color:var(--muted);margin:12px 0 20px}.btn{border:1px solid #444;border-radius:999px;padding:11px 16px;background:#171714;color:var(--text);font-weight:800;cursor:pointer}.btn.primary{background:var(--text);color:#111;border-color:var(--text)}.btn:disabled{opacity:.45;cursor:not-allowed}
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:16px 0;border-bottom:1px solid var(--line)}.counter{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-right:auto}
+.notice{margin-top:18px;padding:14px 16px;border:1px solid #534f36;border-radius:14px;background:#15140f;color:#d8d4c8;font-size:12px}.notice strong{color:var(--accent)}
+.files{display:grid;gap:16px;margin-top:18px}.file{border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--panel)}.filehead{padding:15px 16px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}.filehead b{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tag{font-size:9px;border:1px solid #555;padding:4px 7px;border-radius:999px;letter-spacing:.1em}.pages{padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.page{border:1px solid #2b2b27;border-radius:13px;overflow:hidden;background:#151512}.thumb{height:210px;display:grid;place-items:center;background:#1c1c18}.thumb canvas{max-width:88%;max-height:88%;background:#fff;box-shadow:0 7px 20px rgba(0,0,0,.3)}.pageinfo{padding:10px 12px;display:flex;align-items:center;gap:8px}.pname{font-weight:700}.meta{padding:0 12px 12px;color:var(--muted);font-size:10px}.empty{color:var(--muted);padding:38px;text-align:center}
+.footer{margin-top:38px;border-top:1px solid #222;padding-top:20px;color:#777;font-size:11px}
+@media(max-width:650px){.navin{padding:12px 15px}.wrap{padding:18px 15px 50px}.drop{min-height:220px}.pages{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body>
+<header class="nav"><div class="navin"><div class="brand"><div class="logo">P</div><div><b>PDF + AI → PLT</b><small>Batch Cutter v17 · Public Edition</small></div></div><span style="color:#888;font-size:11px">GitHub Pages</span></div></header>
+<main class="wrap">
+<section class="drop" id="drop">
+  <div><strong>Drop PDF or AI files</strong><p>Choose files or drag them here. PDF previews run in your browser.</p><button class="btn primary" id="choose">Choose files</button><input id="file" type="file" hidden multiple accept=".pdf,.ai,application/pdf,application/postscript"></div>
+</section>
+<div class="toolbar"><span class="counter" id="counter">0 files · 0 pages</span><button class="btn" id="clear" disabled>Clear</button></div>
+<div class="notice"><strong>Public static edition:</strong> this GitHub Pages version has no backend. It can preview PDFs client-side, but PLT/ZIP generation requires a conversion server.</div>
+<section class="files" id="files"><div class="empty">No files selected yet.</div></section>
+<div class="footer">Frontend hosted on GitHub Pages. No login and no server-side storage are used by this static page.</div>
+</main>
+<script type="module">
+import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.mjs";
+const $=s=>document.querySelector(s), drop=$("#drop"), input=$("#file"), choose=$("#choose"), files=$("#files"), counter=$("#counter"), clear=$("#clear");
+let selected=[];
+choose.onclick=e=>{e.stopPropagation();input.click()}; drop.onclick=()=>input.click();
+["dragenter","dragover"].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add("over")}));
+["dragleave","drop"].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove("over")}));
+drop.addEventListener("drop",e=>addFiles([...e.dataTransfer.files]));
+input.onchange=()=>addFiles([...input.files]);
+clear.onclick=()=>{selected=[];render();input.value=""};
+function esc(s){return s.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
+async function addFiles(fs){
+  const valid=fs.filter(f=>/\.(pdf|ai)$/i.test(f.name));
+  for(const f of valid){
+    if(selected.some(x=>x.name===f.name&&x.size===f.size)) continue;
+    selected.push(f);
+  }
+  render();
+}
+async function render(){
+  files.innerHTML=""; let pages=0;
+  if(!selected.length){files.innerHTML='<div class="empty">No files selected yet.</div>';clear.disabled=true;counter.textContent="0 files · 0 pages";return}
+  clear.disabled=false;
+  for(const f of selected){
+    const section=document.createElement("article");section.className="file";
+    section.innerHTML='<div class="filehead"><span class="tag">'+(f.name.toLowerCase().endsWith(".ai")?"AI":"PDF")+'</span><b title="'+esc(f.name)+'">'+esc(f.name)+'</b><span style="color:#888;font-size:10px">'+Math.round(f.size/1024)+' KB</span></div><div class="pages"></div>';
+    files.appendChild(section);
+    const grid=section.querySelector(".pages");
+    if(!/\.pdf$/i.test(f.name)){grid.innerHTML='<div class="empty" style="grid-column:1/-1">AI files require the original conversion backend for preview/export.</div>';continue}
+    try{
+      const bytes=await f.arrayBuffer(), pdf=await pdfjsLib.getDocument({data:bytes}).promise; pages+=pdf.numPages;
+      for(let n=1;n<=pdf.numPages;n++){
+        const p=await pdf.getPage(n), vp=p.getViewport({scale:.65});
+        const card=document.createElement("div");card.className="page";
+        card.innerHTML='<div class="thumb"><canvas></canvas></div><div class="pageinfo"><input type="checkbox"><span class="pname">Page '+n+'</span></div><div class="meta">Browser preview · PLT export unavailable</div>';
+        grid.appendChild(card);
+        const c=card.querySelector("canvas"), ratio=Math.min(170/vp.width,185/vp.height), tv=p.getViewport({scale:ratio});
+        c.width=Math.ceil(tv.width*1.5);c.height=Math.ceil(tv.height*1.5);c.style.width=tv.width+"px";c.style.height=tv.height+"px";
+        await p.render({canvasContext:c.getContext("2d",{alpha:false}),viewport:tv}).promise;
+      }
+    }catch(err){grid.innerHTML='<div class="empty" style="grid-column:1/-1">Could not preview this PDF in the browser.</div>'}
+  }
+  counter.textContent=selected.length+" file"+(selected.length===1?"":"s")+" · "+pages+" page"+(pages===1?"":"s");
+}
+</script>
+</body>
+</html>
