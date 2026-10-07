@@ -571,7 +571,7 @@ async function renderPage(doc, n){
   doc.pages.appendChild(card);
 
   // Start server analysis immediately while the browser renders the thumbnail.
-  const analysisPromise = analyzePage(doc, n);
+  const analysisPromise = doc.sourceType === "PDF" ? analyzeLocalPage(doc, n) : analyzePage(doc, n);
 
   const canvas = document.createElement("canvas");
   const dpr = Math.min(devicePixelRatio || 1, 2);
