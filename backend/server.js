@@ -719,7 +719,7 @@ app.get("/api/source/:id/plt/:page", async (req, res) => {
     const base = safeName(source.name.replace(/\.(pdf|ai)$/i, ""));
     const name = `${base}_page_${String(page).padStart(2, "0")}.PLT`;
     const stored = storePlt(name, result.hpgl);
-    fs.rmSync(result.temp, { force: true });
+    // Keep the generated/cached PLT alive until the normal runtime cleanup. The cache uses temp: null.
     res.json({
       ok: true,
       id: stored.id,
