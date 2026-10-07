@@ -308,6 +308,26 @@ function toFullUrl(url) {
 
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function setStatus(s){ status.textContent = s; }
+// Local PDF analysis: inspect PDF.js operators in the browser without uploading the PDF.
+const PDF_OPS = pdfjsLib.OPS || {};
+const PDF_OP_NAME = new Map(Object.entries(PDF_OPS).map(([name, code]) => [code, name]));
+const LOCAL_PATH_OPS = new Set(["moveTo","lineTo","curveTo","curveTo3","curveTo4","closePath","rectangle","constructPath"]);
+const LOCAL_PAINT_OPS = new Set(["stroke","closeStroke","fill","eoFill","fillStroke","eoFillStroke","closeFillStroke","closeEOFillStroke"]);
+
+async function analyzeLocalPage(doc, n){
+  const page = await doc.pdf.getPage(n);
+  const list = await page.getOperatorList();
+  let pathOps = 0, paintOps = 0, imageOps = 0, textOps = 0;
+  for (const code of list.fnArray || []) {
+    const name = PDF_OP_NAME.get(code) || "";
+    if (LOCAL_PATH_OPS.has(name)) pathOps++;
+    if (LOCAL_PAINT_OPS.has(name)) paintOps++;
+    if (/Image|Jpeg/i.test(name)) imageOps++;
+    if (/Text|beginText|endText|showText/i.test(name)) textOps++;
+  }
+  const hasRaster = imageOps > 0;
+  return { cuttable: pathOps > 0 && paintOps > 0 && !hasRaster, painted: paintOps, drawingCommands: pathOps, pathOps, paintOps, images: imageOps, imageOps, textOps, raster: hasRaster, engine: "PDF.js local analysis" };
+}
 
 function update(){
   const pages = [...document.querySelectorAll(".page")];
@@ -465,7 +485,7 @@ async function addFiles(files){
   }
   await Promise.all(Array.from({ length: fileWorkerCount }, fileWorker));
   update();
-  setStatus("Ready. Pages containing JPG/bitmap artwork are blocked from automatic selection and PLT export.");
+  setStatus("Ready. PDFs are processed locally; upload starts only when you convert to PLT.");
 }
 
 function createFileCard(file, label){
@@ -492,43 +512,26 @@ function wireDocCard(doc){
 
 async function loadSource(file, label){
   const card = createFileCard(file, label);
-  const doc = {
-    file,
-    sourceName: file.name,
-    sourceType: label,
-    sourceId: null,
-    pdf: null,
-    pageCount: 0,
-    card,
-    pages: card.querySelector(".pages")
-  };
+  const doc = { file, sourceName: file.name, sourceType: label, sourceId: null, pdf: null, pageCount: 0, card, pages: card.querySelector(".pages") };
   docs.push(doc);
   wireDocCard(doc);
-
   try {
-    // Preview PDFs directly from the local File while the backend upload runs in parallel.
-    const localPdfPromise = label === "PDF"
-      ? file.arrayBuffer().then(data => pdfjsLib.getDocument({ data: new Uint8Array(data), verbosity: 0 }).promise)
-      : Promise.resolve(null);
-
-    const uploadPromise = registerFile(file);
-    const [localPdf, info] = await Promise.all([localPdfPromise, uploadPromise]);
-
-    doc.sourceId = info.id;
-    card.querySelector("small").textContent = `${localPdf ? "Local preview" : "Loading pages"} · ${info.previewEngine || "server"}`;
-
-    const pdf = localPdf || await pdfjsLib.getDocument({
-      url: toFullUrl(info.pdfUrl),
-      verbosity: 0
-    }).promise;
-
+    let info = null;
+    let pdf;
+    if (label === "PDF") {
+      const data = await file.arrayBuffer();
+      pdf = await pdfjsLib.getDocument({ data: new Uint8Array(data), verbosity: 0 }).promise;
+      card.querySelector("small").textContent = "Local PDF · not uploaded";
+    } else {
+      info = await registerFile(file);
+      doc.sourceId = info.id;
+      card.querySelector("small").textContent = `Loading pages · ${info.previewEngine || "server"}`;
+      pdf = await pdfjsLib.getDocument({ url: toFullUrl(info.pdfUrl), verbosity: 0 }).promise;
+    }
     doc.pdf = pdf;
     doc.pageCount = pdf.numPages;
     update();
-
-    card.querySelector("small").textContent = `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"} · ${localPdf ? "local preview" : (info.previewEngine || "ready")}`;
-
-    // Keep the Render free CPU safe: process two pages at a time.
+    card.querySelector("small").textContent = `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"} · ${label === "PDF" ? "local processing" : (info.previewEngine || "ready")}`;
     let nextPage = 1;
     const workerCount = Math.min(2, pdf.numPages);
     async function pageWorker(){
@@ -542,7 +545,7 @@ async function loadSource(file, label){
   } catch (e) {
     card.querySelector("small").textContent = "Failed";
     card.classList.add("ai-failed");
-    doc.pages.innerHTML = `<div class="error"><b>Could not process this ${label} file.</b><br>${esc(e?.message || e)}<br><span style="opacity:.8">Backend with Ghostscript + pstoedit 4.x is required for conversion.</span></div>`;
+    doc.pages.innerHTML = `<div class="error"><b>Could not process this ${label} file.</b><br>${esc(e?.message || e)}<br><span style="opacity:.8">${label === "PDF" ? "PDF is processed locally in your browser." : "Backend with Ghostscript + pstoedit 4.x is required for conversion."}</span></div>`;
   }
 }
 async function analyzePage(doc, n){
@@ -635,7 +638,17 @@ async function renderPage(doc, n){
   });
   update();
 }
+async function ensureSourceId(doc){
+  if (doc.sourceId) return doc.sourceId;
+  if (doc.sourceType !== "PDF") throw new Error("Source is not available.");
+  setStatus("Uploading " + doc.sourceName + " only for PLT conversion…");
+  const info = await registerFile(doc.file);
+  doc.sourceId = info.id;
+  return doc.sourceId;
+}
+
 async function makeFile(doc, n){
+  await ensureSourceId(doc);
   const pageCard = [...doc.pages.querySelectorAll(".page")].find(p => Number(p.dataset.page) === n);
   if (pageCard?.dataset.raster === "1") throw new Error("This page contains raster artwork and is not eligible for PLT export.");
   const units = Math.min(500, Math.max(1, Number($("#units").value) || 40));
@@ -720,6 +733,17 @@ $("#zip").onclick = async () => {
   try {
     $("#zip").disabled = true;
     const jobs = [];
+    const selectedDocs = [...new Set(picks.map(p => docs.find(d => d.pages.contains(p))).filter(Boolean))];
+    let nextDoc = 0;
+    const uploadWorkers = async () => {
+      while (true) {
+        const i = nextDoc++;
+        if (i >= selectedDocs.length) return;
+        await ensureSourceId(selectedDocs[i]);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(2, selectedDocs.length) }, uploadWorkers));
+
     for (const p of picks) {
       const doc = docs.find(d => d.pages.contains(p));
       if (!doc?.sourceId) throw new Error("A selected file is still processing.");
