@@ -64,6 +64,13 @@ if (fs.existsSync(PUBLIC)) {
 
 const SOURCE_CACHE = new Map();
 
+// Process-local executable discovery cache. The Render container does not change its
+// converter installation during a process lifetime, so avoid repeatedly spawning
+// "pstoedit -help"/"gs -version" for every request.
+let CACHED_GS = null;
+let CACHED_PSTOEDIT = null;
+let CACHED_INKSCAPE = null;
+
 function safeName(value) {
   return String(value || "output")
     .replace(/[\\/:*?"<>|\0]/g, "_")
@@ -208,8 +215,10 @@ function inferCommandKind(command) {
 }
 
 function findPstoedit() {
+  if (CACHED_PSTOEDIT) return CACHED_PSTOEDIT;
   if (process.platform !== "win32") {
-    return discoverCommand(["PSTOEDIT_EXE", "PSTOEDIT"], ["pstoedit"], []);
+    CACHED_PSTOEDIT = discoverCommand(["PSTOEDIT_EXE", "PSTOEDIT"], ["pstoedit"], []);
+    return CACHED_PSTOEDIT;
   }
   const candidates = [];
   if (process.env.PSTOEDIT_EXE) candidates.push(process.env.PSTOEDIT_EXE);
@@ -231,25 +240,32 @@ function findPstoedit() {
   for (const command of candidates) {
     if (!command || seen.has(command)) continue;
     seen.add(command);
-    if (fs.existsSync(command) && commandWorks(command, "pstoedit")) return command;
+    if (fs.existsSync(command) && commandWorks(command, "pstoedit")) {
+      CACHED_PSTOEDIT = command;
+      return command;
+    }
   }
   return null;
 }
 
 function findGhostscript() {
-  return discoverCommand(
+  if (CACHED_GS) return CACHED_GS;
+  CACHED_GS = discoverCommand(
     ["GSWIN64C", "GSWIN32C", "GS_EXE", "GS"],
     process.platform === "win32" ? ["gswin64c.exe", "gswin32c.exe", "gswin64c", "gswin32c"] : ["gs"],
     [{ folder: "gs", files: [path.join("bin", "gswin64c.exe"), path.join("bin", "gswin32c.exe"), "gswin64c.exe", "gswin32c.exe"] }]
   );
+  return CACHED_GS;
 }
 
 function findInkscape() {
-  return discoverCommand(
+  if (CACHED_INKSCAPE) return CACHED_INKSCAPE;
+  CACHED_INKSCAPE = discoverCommand(
     ["INKSCAPE_EXE"],
     process.platform === "win32" ? ["inkscape.exe", "inkscape"] : ["inkscape"],
     [{ folder: "Inkscape", files: [path.join("bin", "inkscape.exe"), "inkscape.exe"] }]
   );
+  return CACHED_INKSCAPE;
 }
 
 function makeTempPath(ext) {
@@ -338,13 +354,39 @@ function fallbackVectorStatsFromPs(psText) {
 async function pageToPs(source, page, outPs) {
   const gs = findGhostscript();
   if (!gs) throw new Error("Ghostscript is not installed or available on the server.");
-  await execFileAsync(gs, [
-    "-dSAFER", "-dBATCH", "-dNOPAUSE", "-dQUIET", "-dUseCropBox",
-    `-dFirstPage=${page}`, `-dLastPage=${page}`,
-    "-sDEVICE=ps2write", `-sOutputFile=${outPs}`, source.pdfPath
-  ]);
-  if (!fs.existsSync(outPs) || fs.statSync(outPs).size < 100) throw new Error("Ghostscript produced no usable vector page data.");
-  return outPs;
+
+  source.psCache = source.psCache || new Map();
+  source.psPromises = source.psPromises || new Map();
+
+  if (source.psCache.has(page)) {
+    const cached = source.psCache.get(page);
+    if (cached && fs.existsSync(cached)) return cached;
+    source.psCache.delete(page);
+  }
+
+  if (source.psPromises.has(page)) return source.psPromises.get(page);
+
+  const promise = (async () => {
+    await execFileAsync(gs, [
+      "-dSAFER", "-dBATCH", "-dNOPAUSE", "-dQUIET", "-dUseCropBox",
+      `-dFirstPage=${page}`, `-dLastPage=${page}`,
+      "-sDEVICE=ps2write", `-sOutputFile=${outPs}`, source.pdfPath
+    ]);
+    if (!fs.existsSync(outPs) || fs.statSync(outPs).size < 100) {
+      fs.rmSync(outPs, { force: true });
+      throw new Error("Ghostscript produced no usable vector page data.");
+    }
+    source.psCache.set(page, outPs);
+    source.tempFiles.add(outPs);
+    return outPs;
+  })();
+
+  source.psPromises.set(page, promise);
+  try {
+    return await promise;
+  } finally {
+    source.psPromises.delete(page);
+  }
 }
 
 async function pstoeditPage(source, page, unitsPerMm) {
@@ -352,29 +394,77 @@ async function pstoeditPage(source, page, unitsPerMm) {
   if (!psto) return null;
   const gs = findGhostscript();
   if (!gs) throw new Error("Ghostscript is required by pstoedit for vector conversion.");
-  const scale = sanitizeUnits(unitsPerMm) / 40;
+
+  // HP-GL's conventional coordinate density is 40 plotter units/mm. The UI's
+  // Units/mm value is retained for compatibility but must NOT scale the physical
+  // artwork size. The previous units/40 factor caused 80 to become 2x geometry.
+  sanitizeUnits(unitsPerMm);
+  const cacheKey = String(page);
+
+  source.pltCache = source.pltCache || new Map();
+  source.pltPromises = source.pltPromises || new Map();
+
+  const cached = source.pltCache.get(cacheKey);
+  if (cached && fs.existsSync(cached.outPath)) {
+    return {
+      hpgl: fs.readFileSync(cached.outPath, "utf8"),
+      engine: "pstoedit",
+      outPath: cached.outPath,
+      hasRaster: cached.hasRaster,
+      imageOps: cached.imageOps
+    };
+  }
+
+  if (source.pltPromises.has(cacheKey)) return source.pltPromises.get(cacheKey);
+
   const out = makeTempPath(".plt");
-  const tempPs = makeTempPath(".ps");
+  const promise = (async () => {
+    const tempPs = await pageToPs(source, page, makeTempPath(".ps"));
+    try {
+      // Deliberately omit -xscale/-yscale. This keeps physical dimensions
+      // identical whether the UI shows 40, 80, or another Units/mm value.
+      await execFileAsync(psto, [
+        "-q", "-f", "hpgl", "-gs", gs,
+        "-page", "1", tempPs, out
+      ]);
+      if (!fs.existsSync(out)) throw new Error("pstoedit did not generate output file.");
+
+      const hpgl = fs.readFileSync(out, "utf8");
+      const raster = rasterStatsFromPs(fs.readFileSync(tempPs, "utf8"));
+      source.pltCache.set(cacheKey, {
+        outPath: out,
+        hasRaster: raster.hasRaster,
+        imageOps: raster.imageOps
+      });
+      source.tempFiles.add(out);
+
+      return { hpgl, engine: "pstoedit", outPath: out, hasRaster: raster.hasRaster, imageOps: raster.imageOps };
+    } catch (e) {
+      fs.rmSync(out, { force: true });
+      throw e;
+    }
+  })();
+
+  source.pltPromises.set(cacheKey, promise);
   try {
-    await pageToPs(source, page, tempPs);
-    await execFileAsync(psto, ["-q", "-f", "hpgl", "-gs", gs, "-xscale", String(scale), "-yscale", String(scale), "-page", "1", tempPs, out]);
-    if (!fs.existsSync(out)) throw new Error("pstoedit did not generate output file.");
-    const hpgl = fs.readFileSync(out, "utf8");
-    const raster = rasterStatsFromPs(fs.readFileSync(tempPs, "utf8"));
-    return { hpgl, engine: "pstoedit", outPath: out, hasRaster: raster.hasRaster, imageOps: raster.imageOps };
+    return await promise;
   } finally {
-    fs.rmSync(tempPs, { force: true });
+    source.pltPromises.delete(cacheKey);
   }
 }
 
 async function analyzePage(source, page) {
+  source.analysisCache = source.analysisCache || new Map();
+  if (source.analysisCache.has(page)) return source.analysisCache.get(page);
+
   const p = await pstoeditPage(source, page, 40);
   if (p) {
     const drawn = hpglHasDrawing(p.hpgl);
     const drawingCommands = (p.hpgl.match(/\bPD-?\d+,-?\d+;/gi) || []).length;
     const blockedByRaster = !!p.hasRaster;
-    fs.rmSync(p.outPath, { force: true });
-    return { cuttable: drawn && !blockedByRaster, painted: drawingCommands, images: p.imageOps || 0, raster: blockedByRaster, engine: "pstoedit" };
+    const result = { cuttable: drawn && !blockedByRaster, painted: drawingCommands, images: p.imageOps || 0, raster: blockedByRaster, engine: "pstoedit" };
+    source.analysisCache.set(page, result);
+    return result;
   }
   const ps = makeTempPath(".ps");
   try {
@@ -430,8 +520,14 @@ function sourceById(id) {
 
 function cleanupSource(source) {
   SOURCE_CACHE.delete(source.id);
-  try { fs.rmSync(source.originalPath, { force: true }); } catch {}
-  try { fs.rmSync(source.pdfPath, { force: true }); } catch {}
+  const files = new Set([
+    source.originalPath,
+    source.pdfPath,
+    ...(source.tempFiles || [])
+  ]);
+  for (const file of files) {
+    try { fs.rmSync(file, { force: true }); } catch {}
+  }
 }
 
 function sweepOldFiles() {
@@ -551,7 +647,21 @@ app.post("/api/source", (req, res, next) => {
         const converted = await makePreviewPdf(originalPath, type, pdfPath);
         previewEngine = converted.engine;
       }
-      const source = { id, name: originalName, type, originalPath, pdfPath, previewEngine, createdAt: Date.now() };
+      const source = {
+        id,
+        name: originalName,
+        type,
+        originalPath,
+        pdfPath,
+        previewEngine,
+        createdAt: Date.now(),
+        psCache: new Map(),
+        psPromises: new Map(),
+        pltCache: new Map(),
+        pltPromises: new Map(),
+        analysisCache: new Map(),
+        tempFiles: new Set()
+      };
       SOURCE_CACHE.set(id, source);
       setTimeout(() => cleanupSource(source), 30 * 60 * 1000).unref?.();
 
