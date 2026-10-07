@@ -488,7 +488,7 @@ async function generatePlt(source, page, unitsPerMm) {
       throw new Error("No cuttable vector paths found on this page.");
     }
     const stat = fs.statSync(p.outPath);
-    return { hpgl: p.hpgl, engine: "pstoedit", bytes: stat.size, temp: p.outPath };
+    return { hpgl: p.hpgl, engine: "pstoedit", bytes: stat.size, temp: null };
   }
   throw new Error("Conversion engine (pstoedit + Ghostscript) is unavailable on the server.");
 }
@@ -774,23 +774,38 @@ app.post("/api/batch-zip", async (req, res) => {
     output.on("error", fail);
     archive.pipe(output);
 
-    const used = new Set();
-    for (let i = 0; i < jobs.length; i++) {
-      const job = jobs[i] || {};
-      let source;
-      try { source = sourceById(job.sourceId); } catch (e) { throw new Error(`Batch item ${i + 1}: ${e.message}`); }
-      const page = Number(job.page);
-      if (!Number.isInteger(page) || page < 1) throw new Error(`Batch item ${i + 1}: invalid page.`);
-      const result = await generatePlt(source, page, units);
-      try {
+    const workerCount = 2;
+    let nextJob = 0;
+    const converted = new Array(jobs.length);
+
+    async function batchWorker() {
+      while (true) {
+        const i = nextJob++;
+        if (i >= jobs.length) return;
+        const job = jobs[i] || {};
+        let source;
+        try { source = sourceById(job.sourceId); } catch (e) { throw new Error(`Batch item ${i + 1}: ${e.message}`); }
+        const page = Number(job.page);
+        if (!Number.isInteger(page) || page < 1) throw new Error(`Batch item ${i + 1}: invalid page.`);
+        const result = await generatePlt(source, page, units);
         const base = safeName(source.name.replace(/\.(pdf|ai)$/i, ""));
-        const name = `${base}_page_${String(page).padStart(2, "0")}.PLT`;
-        const entryName = uniqueZipName(name, used);
-        archive.append(result.hpgl, { name: entryName });
-      } finally {
-        fs.rmSync(result.temp, { force: true });
+        converted[i] = {
+          hpgl: result.hpgl,
+          name: `${base}_page_${String(page).padStart(2, "0")}.PLT`
+        };
       }
     }
+
+    await Promise.all(
+      Array.from({ length: Math.min(workerCount, jobs.length) }, () => batchWorker())
+    );
+
+    const used = new Set();
+    for (const item of converted) {
+      const entryName = uniqueZipName(item.name, used);
+      archive.append(item.hpgl, { name: entryName });
+    }
+
     await archive.finalize();
   } catch (e) {
     if (!res.headersSent) res.status(422).json({ error: e.message || "Batch export failed." });
