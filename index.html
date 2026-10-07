@@ -278,6 +278,9 @@ const drop = $("#drop"), input = $("#files"), list = $("#list"), status = $("#st
 const outBox = $("#outputs"), outList = $("#outlist"), downloadMenu = $("#downloadMenu");
 const docs = [], generated = new Map();
 
+// Production converter backend (Render). Localhost is still used automatically during local development.
+window.PLT_API_BASE_URL = window.PLT_API_BASE_URL || "https://free-converter-5j5b.onrender.com";
+
 // API Base Resolution: URL param ?api=... > localStorage > window.PLT_API_BASE_URL > local fallback
 function getApiBase() {
   const param = new URLSearchParams(window.location.search).get("api");
