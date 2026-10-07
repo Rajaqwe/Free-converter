@@ -1,0 +1,17 @@
+{
+  "name": "pdf-to-plt-backend",
+  "version": "17.0.0",
+  "description": "Production Docker backend for PDF/AI to HPGL PLT conversion",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "express": "^4.21.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

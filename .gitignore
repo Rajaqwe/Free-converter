@@ -1,0 +1,17 @@
+# Node dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime and temp files
+backend/runtime/
+runtime/
+*.log
+*.zip
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
+test_assets/
