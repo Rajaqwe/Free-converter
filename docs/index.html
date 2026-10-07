@@ -246,7 +246,7 @@ button:active:not(:disabled){transform:translateY(0) scale(.985)}
 </div>
 
 <div class="settings">
-  <label>Units/mm <input id="units" type="number" value="40" min="1" step="1" style="width:70px"></label>
+  <label title="PLT output is normalized to preserve physical artwork size">Units/mm <input id="units" type="number" value="40" min="1" step="1" style="width:70px"></label>
   <label>Output <strong style="color:var(--ink);font-size:11px">.PLT / HPGL</strong></label>
   <label class="toggle"><input id="autoCheck" type="checkbox" checked> Auto-select cuttable pages when loading</label>
   <label class="toggle"><input id="closePaths" type="checkbox" checked> Close open cutting paths where safe</label>
@@ -498,27 +498,45 @@ async function loadSource(file, label){
   wireDocCard(doc);
 
   try {
-    const info = await registerFile(file);
-    doc.sourceId = info.id;
-    card.querySelector("small").textContent = `Loading pages · ${info.previewEngine || "server"}`;
+    // Preview PDFs directly from the local File while the backend upload runs in parallel.
+    const localPdfPromise = label === "PDF"
+      ? file.arrayBuffer().then(data => pdfjsLib.getDocument({ data: new Uint8Array(data), verbosity: 0 }).promise)
+      : Promise.resolve(null);
 
-    const pdfTargetUrl = toFullUrl(info.pdfUrl);
-    const pdf = await pdfjsLib.getDocument({ url: pdfTargetUrl, verbosity: 0 }).promise;
+    const uploadPromise = registerFile(file);
+    const [localPdf, info] = await Promise.all([localPdfPromise, uploadPromise]);
+
+    doc.sourceId = info.id;
+    card.querySelector("small").textContent = `${localPdf ? "Local preview" : "Loading pages"} · ${info.previewEngine || "server"}`;
+
+    const pdf = localPdf || await pdfjsLib.getDocument({
+      url: toFullUrl(info.pdfUrl),
+      verbosity: 0
+    }).promise;
+
     doc.pdf = pdf;
     doc.pageCount = pdf.numPages;
     update();
 
-    card.querySelector("small").textContent = `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"} · ${info.previewEngine || "ready"}`;
-    for (let n = 1; n <= pdf.numPages; n++) {
-      await renderPage(doc, n);
+    card.querySelector("small").textContent = `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"} · ${localPdf ? "local preview" : (info.previewEngine || "ready")}`;
+
+    // Keep the Render free CPU safe: process two pages at a time.
+    let nextPage = 1;
+    const workerCount = Math.min(2, pdf.numPages);
+    async function pageWorker(){
+      while (true) {
+        const n = nextPage++;
+        if (n > pdf.numPages) return;
+        await renderPage(doc, n);
+      }
     }
+    await Promise.all(Array.from({ length: workerCount }, pageWorker));
   } catch (e) {
     card.querySelector("small").textContent = "Failed";
     card.classList.add("ai-failed");
     doc.pages.innerHTML = `<div class="error"><b>Could not process this ${label} file.</b><br>${esc(e?.message || e)}<br><span style="opacity:.8">Backend with Ghostscript + pstoedit 4.x is required for conversion.</span></div>`;
   }
 }
-
 async function analyzePage(doc, n){
   let r;
   try {
