@@ -448,14 +448,22 @@ async function addFiles(files){
     list.innerHTML = "";
   }
   setStatus(`Loading ${supported.length} file${supported.length === 1 ? "" : "s"}…`);
-  for (const file of supported) {
-    try {
-      if (/\.ai$/i.test(file.name)) await loadSource(file, "AI");
-      else await loadSource(file, "PDF");
-    } catch (e) {
-      setStatus(`Could not load ${file.name}: ${e.message || e}`);
+  let nextFile = 0;
+  const fileWorkerCount = Math.min(2, supported.length);
+  async function fileWorker(){
+    while (true) {
+      const i = nextFile++;
+      if (i >= supported.length) return;
+      const file = supported[i];
+      try {
+        if (/\.ai$/i.test(file.name)) await loadSource(file, "AI");
+        else await loadSource(file, "PDF");
+      } catch (e) {
+        setStatus(`Could not load ${file.name}: ${e.message || e}`);
+      }
     }
   }
+  await Promise.all(Array.from({ length: fileWorkerCount }, fileWorker));
   update();
   setStatus("Ready. Pages containing JPG/bitmap artwork are blocked from automatic selection and PLT export.");
 }
@@ -559,8 +567,27 @@ async function renderPage(doc, n){
   card.innerHTML = `<div class="thumb"><span class="spin"></span></div><div class="pageinfo"><input class="pick" type="checkbox"><span class="pagename">Page ${n}</span></div><div class="meta"><span class="badge nocut">ANALYZING…</span><span class="paths"></span></div><button class="pagebtn" type="button">Download PLT</button>`;
   doc.pages.appendChild(card);
 
+  // Start server analysis immediately while the browser renders the thumbnail.
+  const analysisPromise = analyzePage(doc, n);
+
+  const canvas = document.createElement("canvas");
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const scale = Math.min(172 / vp.width, 188 / vp.height);
+  const tvp = page.getViewport({ scale: scale * dpr });
+  canvas.width = Math.ceil(tvp.width);
+  canvas.height = Math.ceil(tvp.height);
+  canvas.style.width = (tvp.width / dpr) + "px";
+  canvas.style.height = (tvp.height / dpr) + "px";
+
   try {
-    const a = await analyzePage(doc, n);
+    await page.render({ canvasContext: canvas.getContext("2d", { alpha: false }), viewport: tvp }).promise;
+    card.querySelector(".thumb").replaceChildren(canvas);
+  } catch (e) {
+    card.querySelector(".thumb").innerHTML = `<span class="error">Preview failed</span>`;
+  }
+
+  try {
+    const a = await analysisPromise;
     const hasRaster = !!a.raster || Number(a.images || 0) > 0;
     const cuttable = !!a.cuttable && !hasRaster;
     card.dataset.cut = cuttable ? "1" : "0";
@@ -596,18 +623,6 @@ async function renderPage(doc, n){
     card.querySelector(".paths").textContent = e.message || "Vector analysis failed";
   }
 
-  const canvas = document.createElement("canvas");
-  const dpr = Math.min(devicePixelRatio || 1, 2);
-  const scale = Math.min(172 / vp.width, 188 / vp.height);
-  const tvp = page.getViewport({ scale: scale * dpr });
-  canvas.width = Math.ceil(tvp.width);
-  canvas.height = Math.ceil(tvp.height);
-  canvas.style.width = (tvp.width / dpr) + "px";
-  canvas.style.height = (tvp.height / dpr) + "px";
-
-  await page.render({ canvasContext: canvas.getContext("2d", { alpha: false }), viewport: tvp }).promise;
-  card.querySelector(".thumb").replaceChildren(canvas);
-
   card.querySelector(".pick").onchange = () => {
     card.classList.toggle("selected", card.querySelector(".pick").checked);
     update();
@@ -620,7 +635,6 @@ async function renderPage(doc, n){
   });
   update();
 }
-
 async function makeFile(doc, n){
   const pageCard = [...doc.pages.querySelectorAll(".page")].find(p => Number(p.dataset.page) === n);
   if (pageCard?.dataset.raster === "1") throw new Error("This page contains raster artwork and is not eligible for PLT export.");
