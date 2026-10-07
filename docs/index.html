@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PDF + AI → PLT Batch Cutter v17</title>
+
+<style>
+@import url('data:text/css,');
+:root{
+  --ink:#f6f3eb;
+  --muted:#aaa89f;
+  --paper:#0a0a0a;
+  --paper2:#11110f;
+  --line:#2b2b28;
+  --line2:#3a3935;
+  --acid:#f2efe7;
+  --accent:#e8ff3f;
+  --warm:#d8c7aa;
+  --red:#ff655f;
+  --shadow:0 24px 80px rgba(0,0,0,.28);
+  --serif:"Helvetica Neue", Helvetica, Arial, sans-serif;
+  --sans:"Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;background:var(--paper)}
+body{
+  margin:0;background:
+    radial-gradient(circle at 78% 12%, rgba(232,255,63,.055), transparent 22rem),
+    radial-gradient(circle at 10% 24%, rgba(216,199,170,.07), transparent 24rem),
+    var(--paper);
+  color:var(--ink);
+  font:15px/1.55 var(--sans);
+  letter-spacing:.01em;
+  min-height:100vh;
+  overflow-x:hidden;
+}
+body:before{
+  content:"";
+  position:fixed;inset:0;pointer-events:none;opacity:.08;
+  background-image:radial-gradient(rgba(255,255,255,.35) .5px, transparent .5px);
+  background-size:4px 4px;mix-blend-mode:soft-light;
+}
+.drop.over{border-color:var(--accent);box-shadow:0 0 0 1px rgba(232,255,63,.12),0 20px 80px rgba(232,255,63,.06);transform:scale(1.004)}
+body.file-dragging:after{content:"Release to add PDF + AI files";position:fixed;inset:20px;z-index:999;display:grid;place-items:center;border:2px dashed rgba(232,255,63,.65);border-radius:24px;background:rgba(8,8,7,.68);backdrop-filter:blur(5px);color:var(--ink);font-size:18px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;pointer-events:none}
+button,input,select{font:inherit}
+button{transition:transform .35s cubic-bezier(.2,.8,.2,1),background-color .35s ease,border-color .35s ease,color .35s ease,opacity .35s ease}
+button:hover:not(:disabled){transform:translateY(-2px)}
+button:active:not(:disabled){transform:translateY(0) scale(.985)}
+.nav{
+  position:sticky;top:0;z-index:100;
+  background:rgba(10,10,10,.78);
+  backdrop-filter:blur(16px);
+  border-bottom:1px solid rgba(255,255,255,.09);
+}
+.navin{
+  max-width:1680px;margin:auto;padding:16px 28px;
+  display:flex;align-items:center;gap:28px;
+}
+.brand{display:flex;align-items:center;gap:14px;min-width:360px}
+.logo{
+  width:42px;height:42px;border-radius:50%;
+  display:grid;place-items:center;
+  border:1px solid rgba(255,255,255,.5);
+  background:transparent;color:var(--ink);
+  font-weight:900;letter-spacing:-.05em;
+  position:relative;overflow:hidden;
+}
+.logo:after{
+  content:"";position:absolute;inset:5px;border:1px solid rgba(232,255,63,.6);border-radius:50%;
+  animation:spin 16s linear infinite;
+}
+.brand b{font:700 16px/1 var(--sans);letter-spacing:.02em}
+.brand small{display:block;color:var(--muted);font-size:11px;margin-top:6px;letter-spacing:.08em;text-transform:uppercase}
+.navlinks{margin-left:auto;display:flex;align-items:center;gap:8px}
+.navstats{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.navstat{min-width:76px;padding:8px 10px;border:1px solid var(--line2);border-radius:999px;background:#11110f;display:flex;align-items:baseline;justify-content:center;gap:5px;white-space:nowrap}
+.navstat strong{font-size:12px;line-height:1;color:var(--ink);letter-spacing:-.02em}
+.navstat span{font-size:8px;color:#929089;letter-spacing:.1em;text-transform:uppercase}
+.navbtn{position:relative}
+.badgecount{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 5px;border-radius:999px;background:var(--accent);color:#111;font-size:10px}
+.dropmenu{
+  position:absolute;right:0;top:calc(100% + 14px);width:390px;max-height:430px;overflow:auto;
+  background:#111;border:1px solid var(--line2);border-radius:16px;
+  box-shadow:var(--shadow);padding:10px;display:none
+}
+.dropmenu.open{display:block;animation:menuIn .32s cubic-bezier(.2,.8,.2,1)}
+.menuitem{display:flex;align-items:center;gap:9px;padding:10px 8px;border-bottom:1px solid var(--line)}
+.menuitem:last-child{border-bottom:0}
+.menuitem span{flex:1;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn{
+  border:1px solid var(--line2);background:#121210;color:var(--ink);
+  padding:10px 14px;border-radius:999px;font-weight:800;font-size:10px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer
+}
+.btn:hover{border-color:#66645e;background:#1a1a17}
+.btn.primary{background:var(--acid);border-color:var(--acid);color:#10100e}
+.btn.primary:hover{background:#fff}
+.btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.wrap{max-width:1680px;margin:auto;padding:0 28px 90px}
+.drop{
+  min-height:210px;margin:28px 0 18px;
+  border:1px solid #403f3a;border-radius:22px;
+  background:
+    linear-gradient(145deg,rgba(255,255,255,.025),rgba(255,255,255,.005)),
+    #10100e;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;cursor:pointer;
+  position:relative;overflow:hidden;
+  transition:border-color .45s ease,transform .45s cubic-bezier(.2,.8,.2,1),background-color .45s ease
+}
+.drop:before{
+  content:"";position:absolute;inset:14px;border:1px dashed rgba(255,255,255,.09);border-radius:16px;pointer-events:none
+}
+.drop:after{
+  content:"";position:absolute;width:200px;height:200px;border-radius:50%;right:-90px;top:-80px;background:rgba(232,255,63,.07);filter:blur(4px)
+}
+.drop.over{border-color:var(--accent);transform:scale(1.008);background:#14140f}
+.drop strong{font:500 46px/.95 var(--serif);letter-spacing:-.035em;position:relative;z-index:1}
+.drop p{margin:10px 0 18px;color:var(--muted);font-size:13px;position:relative;z-index:1}
+.drop .btn{position:relative;z-index:1}
+.toolbar{
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0;padding:16px 0;border-bottom:1px solid var(--line)
+}
+.counter{color:#8f8d86;font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+.settings{
+  display:flex;gap:14px;align-items:center;flex-wrap:wrap;
+  border-bottom:1px solid var(--line);padding:13px 0
+}
+.settings label{font-size:10px;color:#96938b;text-transform:uppercase;letter-spacing:.12em}
+.settings input,.settings select{
+  border:1px solid var(--line2);border-radius:999px;padding:7px 11px;background:#11110f;color:var(--ink);margin-left:5px
+}
+.settings .toggle{font-weight:800;color:#d1cec6!important}
+.status{min-height:30px;padding:14px 0;color:#98968f;font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+.pdf{
+  background:#0e0e0c;border:1px solid var(--line);border-radius:20px;margin:20px 0;overflow:hidden;box-shadow:0 18px 60px rgba(0,0,0,.18);
+  animation:rise .7s cubic-bezier(.2,.8,.2,1) both
+}
+.pdfhead{
+  display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line);
+  background:linear-gradient(90deg,rgba(255,255,255,.02),transparent)
+}
+.pdfhead b{font:600 25px/1.05 var(--sans);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.02em}
+.pdfhead small{color:#8b8981;font-size:9px;letter-spacing:.1em;text-transform:uppercase}.filetag{padding:5px 7px;border:1px solid var(--line2);border-radius:999px;color:#c7c3b8;font-size:8px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}.filetag.ai{border-color:#6b5d23;color:#eadf9d}.filetag.pdf{border-color:#3d4b50;color:#afc2c9}
+.pdfaction{color:var(--accent);font-size:9px;font-weight:900;text-transform:uppercase;cursor:pointer;letter-spacing:.1em}
+.pages{padding:18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(208px,1fr));gap:14px}
+.page{
+  background:#131310;border:1px solid #2a2a27;border-radius:15px;overflow:hidden;
+  transition:transform .4s cubic-bezier(.2,.8,.2,1),border-color .35s ease,box-shadow .35s ease;
+  animation:rise .55s cubic-bezier(.2,.8,.2,1) both
+}
+.page:hover{transform:translateY(-6px);border-color:#55534c;box-shadow:0 18px 40px rgba(0,0,0,.22)}
+.page.selected{outline:2px solid var(--accent);border-color:transparent;box-shadow:0 0 0 5px rgba(232,255,63,.055)}
+.page.blocked{border-color:#4a4030;box-shadow:inset 0 0 0 1px rgba(232,183,63,.08)}
+.page.blocked:hover{transform:none;border-color:#5b503e}
+.page.blocked .pick{cursor:not-allowed;opacity:.45}
+.thumb{height:236px;background:#1a1a17;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.thumb:before{
+  content:"";position:absolute;width:46%;aspect-ratio:1;border:1px solid rgba(255,255,255,.08);border-radius:50%
+}
+.thumb canvas{background:#fff;box-shadow:0 8px 28px rgba(0,0,0,.35);max-width:84%;max-height:88%;position:relative;z-index:1}
+.spin{width:28px;height:28px;border:1px solid rgba(255,255,255,.18);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+.pageinfo{padding:11px 12px 6px;display:flex;align-items:center;gap:8px}
+.pick{width:16px;height:16px;accent-color:var(--accent)}
+.pagename{font:600 19px/1.1 var(--sans);letter-spacing:-.02em}
+.meta{padding:0 12px 10px;display:flex;justify-content:space-between;gap:5px;align-items:center}
+.badge{padding:5px 7px;border-radius:999px;font-size:8px;font-weight:900;letter-spacing:.11em}
+.cut{background:var(--accent);color:#111}
+.nocut{background:#252522;color:#98968f}
+.mixed{background:#413c1f;color:#f0da7b}
+.paths{font-size:11px;color:#8b8981;text-align:right}
+.pagebtn{
+  margin:0 12px 12px;width:calc(100% - 24px);padding:9px 12px;border-radius:999px;
+  border:1px solid var(--line2);background:#11110f;color:var(--ink);font-size:10px;font-weight:900;cursor:pointer;text-transform:uppercase;letter-spacing:.09em
+}
+.pagebtn:hover{border-color:var(--accent);color:var(--accent)}
+.pagebtn.ready{background:var(--accent);color:#111;border-color:var(--accent)}
+.outputs{
+  background:#0e0e0c;border:1px solid var(--line);border-radius:18px;padding:16px 18px;margin-top:22px;box-shadow:var(--shadow)
+}
+.outputs h3{margin:0 0 10px;font:600 31px/1.05 var(--sans);letter-spacing:-.03em}
+.outrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.outrow:first-of-type{border-top:0}
+.outname{flex:1;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#c2bfb6}
+.outbtn{border:1px solid var(--line2);background:#11110f;color:var(--ink);border-radius:999px;padding:7px 10px;font-size:10px;font-weight:800;cursor:pointer;text-transform:uppercase}
+.error{padding:12px;background:#2b1413;color:#ffaba7;border-radius:10px;font-size:10px}
+.apibadge{cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.apibadge:hover{color:var(--accent)}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes corePulse{0%,100%{box-shadow:0 0 30px rgba(232,255,63,.08);opacity:.84}50%{box-shadow:0 0 58px rgba(232,255,63,.18);opacity:1}}
+@keyframes float{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(0,-14px,0)}}
+@keyframes rise{from{opacity:0;transform:translate3d(0,18px,0)}to{opacity:1;transform:none}}
+@keyframes menuIn{from{opacity:0;transform:translate3d(0,-8px) scale(.98)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){
+  *,*:before,*:after{animation-duration:.001ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition:none!important}
+}
+@media(max-width:940px){
+  .navin{padding:14px 16px}.brand{min-width:0}.brand small{display:none}
+  .wrap{padding:0 16px 60px}
+  .drop strong{font-size:42px}.pages{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}
+}
+@media(max-width:580px){
+  .navlinks{flex-wrap:wrap;justify-content:flex-end}.navstats{order:3;width:100%;justify-content:flex-end}.navin{gap:10px}.brand b{font-size:12px}
+  .drop{min-height:180px}.drop strong{font-size:34px}.pages{grid-template-columns:1fr 1fr}.thumb{height:180px}
+  .pdfhead{flex-wrap:wrap}.pdfhead small{order:3;width:100%}
+}
+</style>
+<script src="config.js"></script>
+</head>
+<body>
+<header class="nav">
+  <div class="navin">
+    <div class="brand">
+      <div class="logo">PL</div>
+      <div><b>PDF + AI → PLT Batch Cutter</b><small>Inspect PDF / AI artwork • auto-detect cuttable vector outlines • export PLT files or ZIP</small></div>
+    </div>
+    <div class="navlinks">
+      <div class="navstats" id="navStats" aria-label="Upload and page summary">
+        <div class="navstat"><strong id="uploadedDocCount">0</strong><span>Uploaded Docs</span></div>
+        <div class="navstat"><strong id="allPageCount">0</strong><span>All Pages</span></div>
+        <div class="navstat"><strong id="selectedPageCount">0</strong><span>Selected</span></div>
+        <div class="navstat"><strong id="cuttablePageCount">0</strong><span>Cuttable</span></div>
+      </div>
+      <button class="btn navbtn" id="downloadsBtn">Downloads <span class="badgecount" id="downloadCount">0</span>
+        <div class="dropmenu" id="downloadMenu"></div>
+      </button>
+      <span class="btn apibadge" id="engine" title="Click to view or change backend URL">Checking converter…</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section id="drop" class="drop">
+  <strong>Drop PDF + AI files here</strong>
+  <p>Drag multiple files from Windows Explorer, or use Ctrl/Shift to select multiple files.</p>
+  <button id="choose" class="btn primary" type="button">Choose PDF + AI files</button>
+  <input id="files" type="file" accept="application/pdf,.pdf,application/illustrator,.ai" multiple hidden>
+</section>
+
+<div class="toolbar">
+  <button class="btn" id="all">Select all pages</button>
+  <button class="btn" id="clear">Clear selection</button>
+  <button class="btn" id="auto">Auto-select cuttable outlines</button>
+  <button class="btn" id="allpdf">Select all in every file</button>
+  <button class="btn primary" id="zip">Convert selected + Download ZIP</button>
+</div>
+
+<div class="settings">
+  <label>Units/mm <input id="units" type="number" value="40" min="1" step="1" style="width:70px"></label>
+  <label>Output <strong style="color:var(--ink);font-size:11px">.PLT / HPGL</strong></label>
+  <label class="toggle"><input id="autoCheck" type="checkbox" checked> Auto-select cuttable pages when loading</label>
+  <label class="toggle"><input id="closePaths" type="checkbox" checked> Close open cutting paths where safe</label>
+</div>
+
+<div id="status" class="status">Ready. Add PDF or AI files.</div>
+<div class="kicker" style="margin:12px 0 4px">01 — Your files</div>
+<div id="list"><div style="text-align:center;color:var(--muted);padding:55px 0">No PDF or AI files loaded yet.</div></div>
+
+<section id="outputs" class="outputs" hidden>
+  <h3>Generated files — download individually</h3>
+  <div id="outlist"></div>
+</section>
+</main>
+
+<script type="module">
+// Load PDF.js with local repository fallback or fast CDN
+let pdfjsLib;
+try {
+  pdfjsLib = await import("./assets/pdfjs/pdf.min.mjs");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "./assets/pdfjs/pdf.worker.min.mjs";
+} catch {
+  pdfjsLib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+}
+
+const $ = s => document.querySelector(s);
+const drop = $("#drop"), input = $("#files"), list = $("#list"), status = $("#status"), engine = $("#engine");
+const outBox = $("#outputs"), outList = $("#outlist"), downloadMenu = $("#downloadMenu");
+const docs = [], generated = new Map();
+
+// Production converter backend (Render). Localhost is still used automatically during local development.
+window.PLT_API_BASE_URL = window.PLT_API_BASE_URL || "https://free-converter-5j5b.onrender.com";
+
+// API Base Resolution: URL param ?api=... > localStorage > window.PLT_API_BASE_URL > local fallback
+function getApiBase() {
+  const param = new URLSearchParams(window.location.search).get("api");
+  if (param) return param.replace(/\/+$/, "");
+  const stored = localStorage.getItem("PLT_API_BASE_URL");
+  if (stored) return stored.replace(/\/+$/, "");
+  if (window.PLT_API_BASE_URL) return window.PLT_API_BASE_URL.replace(/\/+$/, "");
+  if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
+    return `${location.protocol}//${location.hostname}:10000`;
+  }
+  return "";
+}
+
+function apiUrl(endpoint) {
+  const base = getApiBase();
+  const cleanEndpoint = endpoint.startsWith("/") ? endpoint : "/" + endpoint;
+  return base ? `${base}${cleanEndpoint}` : cleanEndpoint;
+}
+
+function toFullUrl(url) {
+  if (!url) return "";
+  if (/^https?:\/\//i.test(url)) return url;
+  return apiUrl(url);
+}
+
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function setStatus(s){ status.textContent = s; }
+
+function update(){
+  const pages = [...document.querySelectorAll(".page")];
+  const uploaded = docs.length;
+  const all = docs.reduce((sum, d) => sum + Number(d.pageCount || 0), 0);
+  const sel = pages.filter(p => p.querySelector(".pick")?.checked).length;
+  const cut = pages.filter(p => p.dataset.cut === "1").length;
+  $("#uploadedDocCount").textContent = uploaded;
+  $("#allPageCount").textContent = all;
+  $("#selectedPageCount").textContent = sel;
+  $("#cuttablePageCount").textContent = cut;
+  $("#downloadCount").textContent = generated.size;
+  renderDownloadMenu();
+}
+
+function setPick(card, value){
+  const cb = card.querySelector(".pick");
+  const next = cb.disabled ? false : !!value;
+  cb.checked = next;
+  card.classList.toggle("selected", next);
+}
+
+function setAll(v){
+  document.querySelectorAll(".page").forEach(p => setPick(p, v));
+  update();
+}
+
+function selected(){
+  return [...document.querySelectorAll(".page")].filter(p => p.querySelector(".pick")?.checked);
+}
+
+$("#choose").onclick = e => { e.stopPropagation(); input.click(); };
+drop.onclick = () => input.click();
+
+const hasFilePayload = e => !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+let fileDragDepth = 0;
+
+document.addEventListener("dragenter", e => {
+  if (!hasFilePayload(e)) return;
+  e.preventDefault();
+  fileDragDepth++;
+  document.body.classList.add("file-dragging");
+  drop.classList.add("over");
+});
+
+document.addEventListener("dragover", e => {
+  if (!hasFilePayload(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+});
+
+document.addEventListener("dragleave", e => {
+  if (!hasFilePayload(e)) return;
+  e.preventDefault();
+  fileDragDepth = Math.max(0, fileDragDepth - 1);
+  if (fileDragDepth === 0) {
+    document.body.classList.remove("file-dragging");
+    drop.classList.remove("over");
+  }
+});
+
+document.addEventListener("drop", e => {
+  if (!hasFilePayload(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  fileDragDepth = 0;
+  document.body.classList.remove("file-dragging");
+  drop.classList.remove("over");
+  addFiles([...e.dataTransfer.files]);
+});
+
+input.addEventListener("change", e => {
+  addFiles([...e.target.files]);
+  input.value = "";
+});
+
+$("#all").onclick = () => setAll(true);
+$("#clear").onclick = () => setAll(false);
+$("#allpdf").onclick = () => setAll(true);
+
+$("#auto").onclick = () => {
+  document.querySelectorAll(".page").forEach(p => setPick(p, p.dataset.cut === "1"));
+  update();
+  setStatus("Automatically selected every page verified to contain convertible vector geometry.");
+};
+
+$("#autoCheck").onchange = () => {
+  if ($("#autoCheck").checked) $("#auto").click();
+};
+
+$("#downloadsBtn").onclick = e => {
+  e.stopPropagation();
+  downloadMenu.classList.toggle("open");
+};
+
+document.addEventListener("click", () => downloadMenu.classList.remove("open"));
+
+// Interactive API Configuration dialog
+engine.onclick = () => {
+  const current = getApiBase();
+  const next = window.prompt("Converter Backend URL:\n(Leave empty to use default, or enter your Render service URL)", current);
+  if (next !== null) {
+    const trimmed = next.trim().replace(/\/+$/, "");
+    if (trimmed) localStorage.setItem("PLT_API_BASE_URL", trimmed);
+    else localStorage.removeItem("PLT_API_BASE_URL");
+    window.location.reload();
+  }
+};
+
+async function registerFile(file){
+  const data = await file.arrayBuffer();
+  let r;
+  try {
+    r = await fetch(apiUrl("/api/source"), {
+      method: "POST",
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "X-File-Name": encodeURIComponent(file.name)
+      },
+      body: data
+    });
+  } catch (err) {
+    throw new Error("Conversion server unavailable. The backend may be waking up from sleep. Please wait a moment and try again.");
+  }
+  let payload = {};
+  try { payload = await r.json(); } catch {}
+  if (!r.ok) throw new Error(payload.error || `Server rejected ${file.name}`);
+  return payload;
+}
+
+async function addFiles(files){
+  const supported = files.filter(f => /\.(pdf|ai)$/i.test(f.name));
+  if (!supported.length) {
+    setStatus("Please choose PDF or AI files.");
+    return;
+  }
+  if (list.children.length === 1 && list.firstElementChild.textContent.includes("No PDF or AI files")) {
+    list.innerHTML = "";
+  }
+  setStatus(`Loading ${supported.length} file${supported.length === 1 ? "" : "s"}…`);
+  for (const file of supported) {
+    try {
+      if (/\.ai$/i.test(file.name)) await loadSource(file, "AI");
+      else await loadSource(file, "PDF");
+    } catch (e) {
+      setStatus(`Could not load ${file.name}: ${e.message || e}`);
+    }
+  }
+  update();
+  setStatus("Ready. Pages containing JPG/bitmap artwork are blocked from automatic selection and PLT export.");
+}
+
+function createFileCard(file, label){
+  const card = document.createElement("section");
+  card.className = "pdf";
+  card.innerHTML = `<div class="pdfhead"><span class="filetag ${label.toLowerCase()}">${label}</span><b title="${esc(file.name)}">${esc(file.name)}</b><small>Uploading…</small><span class="pdfaction">Select outline pages</span><button class="btn" type="button" data-remove>Remove</button></div><div class="pages"></div>`;
+  list.appendChild(card);
+  return card;
+}
+
+function wireDocCard(doc){
+  const { card, pages } = doc;
+  card.querySelector(".pdfaction").onclick = () => {
+    pages.querySelectorAll(".page").forEach(p => setPick(p, p.dataset.cut === "1"));
+    update();
+  };
+  card.querySelector("[data-remove]").onclick = () => {
+    card.remove();
+    const i = docs.indexOf(doc);
+    if (i >= 0) docs.splice(i, 1);
+    update();
+  };
+}
+
+async function loadSource(file, label){
+  const card = createFileCard(file, label);
+  const doc = {
+    file,
+    sourceName: file.name,
+    sourceType: label,
+    sourceId: null,
+    pdf: null,
+    pageCount: 0,
+    card,
+    pages: card.querySelector(".pages")
+  };
+  docs.push(doc);
+  wireDocCard(doc);
+
+  try {
+    const info = await registerFile(file);
+    doc.sourceId = info.id;
+    card.querySelector("small").textContent = `Loading pages · ${info.previewEngine || "server"}`;
+
+    const pdfTargetUrl = toFullUrl(info.pdfUrl);
+    const pdf = await pdfjsLib.getDocument({ url: pdfTargetUrl, verbosity: 0 }).promise;
+    doc.pdf = pdf;
+    doc.pageCount = pdf.numPages;
+    update();
+
+    card.querySelector("small").textContent = `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"} · ${info.previewEngine || "ready"}`;
+    for (let n = 1; n <= pdf.numPages; n++) {
+      await renderPage(doc, n);
+    }
+  } catch (e) {
+    card.querySelector("small").textContent = "Failed";
+    card.classList.add("ai-failed");
+    doc.pages.innerHTML = `<div class="error"><b>Could not process this ${label} file.</b><br>${esc(e?.message || e)}<br><span style="opacity:.8">Backend with Ghostscript + pstoedit 4.x is required for conversion.</span></div>`;
+  }
+}
+
+async function analyzePage(doc, n){
+  let r;
+  try {
+    r = await fetch(apiUrl(`/api/source/${doc.sourceId}/analyze/${n}`), { cache: "no-store" });
+  } catch {
+    throw new Error("Analysis failed: backend service unreachable.");
+  }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || "Vector analysis failed.");
+  return j;
+}
+
+async function renderPage(doc, n){
+  const page = await doc.pdf.getPage(n);
+  const vp = page.getViewport({ scale: 1 });
+  const card = document.createElement("div");
+  card.className = "page";
+  card.dataset.page = n;
+  card.dataset.cut = "0";
+  card.innerHTML = `<div class="thumb"><span class="spin"></span></div><div class="pageinfo"><input class="pick" type="checkbox"><span class="pagename">Page ${n}</span></div><div class="meta"><span class="badge nocut">ANALYZING…</span><span class="paths"></span></div><button class="pagebtn" type="button">Download PLT</button>`;
+  doc.pages.appendChild(card);
+
+  try {
+    const a = await analyzePage(doc, n);
+    const hasRaster = !!a.raster || Number(a.images || 0) > 0;
+    const cuttable = !!a.cuttable && !hasRaster;
+    card.dataset.cut = cuttable ? "1" : "0";
+    card.dataset.raster = hasRaster ? "1" : "0";
+
+    const cb = card.querySelector(".pick");
+    cb.disabled = hasRaster;
+    cb.title = hasRaster ? "Not selectable: this page contains JPG/bitmap artwork that cannot be cut as PLT." : "";
+    card.classList.toggle("blocked", hasRaster);
+
+    const badge = card.querySelector(".badge"), paths = card.querySelector(".paths");
+    if (hasRaster) {
+      badge.className = "badge mixed";
+      badge.textContent = "BITMAP / RASTER — NOT SELECTED";
+      paths.textContent = `${a.images || 1} bitmap object${(a.images || 1) === 1 ? "" : "s"} · PLT blocked`;
+      setPick(card, false);
+    } else if (cuttable) {
+      badge.className = "badge cut";
+      badge.textContent = "CUTTABLE OUTLINE";
+      paths.textContent = `${a.painted || a.drawingCommands || 1} vector path${(a.painted || a.drawingCommands || 1) === 1 ? "" : "s"} · ${a.engine || "PLT engine"}`;
+    } else {
+      badge.className = "badge nocut";
+      badge.textContent = "NO CUTTABLE OUTLINE";
+      paths.textContent = "No painted vector path";
+    }
+
+    if ($("#autoCheck").checked && cuttable) setPick(card, true);
+  } catch (e) {
+    card.dataset.cut = "0";
+    const badge = card.querySelector(".badge");
+    badge.className = "badge nocut";
+    badge.textContent = "ANALYSIS FAILED";
+    card.querySelector(".paths").textContent = e.message || "Vector analysis failed";
+  }
+
+  const canvas = document.createElement("canvas");
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const scale = Math.min(172 / vp.width, 188 / vp.height);
+  const tvp = page.getViewport({ scale: scale * dpr });
+  canvas.width = Math.ceil(tvp.width);
+  canvas.height = Math.ceil(tvp.height);
+  canvas.style.width = (tvp.width / dpr) + "px";
+  canvas.style.height = (tvp.height / dpr) + "px";
+
+  await page.render({ canvasContext: canvas.getContext("2d", { alpha: false }), viewport: tvp }).promise;
+  card.querySelector(".thumb").replaceChildren(canvas);
+
+  card.querySelector(".pick").onchange = () => {
+    card.classList.toggle("selected", card.querySelector(".pick").checked);
+    update();
+  };
+  card.querySelector(".pagebtn").onclick = () => downloadOne(doc, n, card.querySelector(".pagebtn"));
+  card.addEventListener("click", e => {
+    if (e.target.matches("input,button")) return;
+    setPick(card, !card.querySelector(".pick").checked);
+    update();
+  });
+  update();
+}
+
+async function makeFile(doc, n){
+  const pageCard = [...doc.pages.querySelectorAll(".page")].find(p => Number(p.dataset.page) === n);
+  if (pageCard?.dataset.raster === "1") throw new Error("This page contains raster artwork and is not eligible for PLT export.");
+  const units = Math.min(500, Math.max(1, Number($("#units").value) || 40));
+  let r;
+  try {
+    r = await fetch(apiUrl(`/api/source/${doc.sourceId}/plt/${n}?units=${encodeURIComponent(units)}`), { cache: "no-store" });
+  } catch {
+    throw new Error("Conversion server unreachable. If waking from cold start, please wait 30 seconds and retry.");
+  }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || "PLT conversion failed.");
+  return {
+    id: d.id,
+    name: d.name,
+    downloadUrl: toFullUrl(d.downloadUrl),
+    bytes: d.bytes,
+    engine: d.engine
+  };
+}
+
+async function downloadOne(doc, n, button){
+  try {
+    button.disabled = true;
+    button.textContent = "Converting…";
+    const f = await makeFile(doc, n);
+    generated.set(f.id, f);
+    renderDownloadMenu();
+    outBox.hidden = false;
+    addOutput(f);
+
+    const a = document.createElement("a");
+    a.href = f.downloadUrl;
+    a.download = f.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    button.textContent = "Download again";
+    button.classList.add("ready");
+    button.disabled = false;
+    setStatus(`PLT ready: ${f.name} · ${Math.round((f.bytes || 0) / 1024)} KB`);
+  } catch (e) {
+    button.disabled = false;
+    button.textContent = "Download PLT";
+    setStatus(`Download error: ${e.message}`);
+  }
+}
+
+function addOutput(f){
+  outBox.hidden = false;
+  const key = `out-${f.id}`;
+  if (document.getElementById(key)) return;
+  const row = document.createElement("div");
+  row.className = "outrow";
+  row.id = key;
+  row.innerHTML = `<span class="outname" title="${esc(f.name)}">${esc(f.name)}</span><button class="outbtn">Download</button>`;
+  outList.appendChild(row);
+  row.querySelector("button").onclick = () => { window.location.href = f.downloadUrl; };
+}
+
+function renderDownloadMenu(){
+  if (!generated.size) {
+    downloadMenu.innerHTML = `<div style="padding:12px;color:var(--muted);font-size:11px">No generated files yet. Use a page's Download PLT button.</div>`;
+    return;
+  }
+  const vals = [...generated.values()];
+  downloadMenu.innerHTML = vals.map(f => `<div class="menuitem"><span>${esc(f.name)}</span><button class="outbtn" data-url="${esc(f.downloadUrl)}">Download</button></div>`).join("");
+  downloadMenu.querySelectorAll("[data-url]").forEach(b => {
+    b.onclick = e => {
+      e.stopPropagation();
+      window.location.href = b.dataset.url;
+    };
+  });
+}
+
+$("#zip").onclick = async () => {
+  const picks = selected();
+  if (!picks.length) {
+    setStatus("Select at least one page.");
+    return;
+  }
+  try {
+    $("#zip").disabled = true;
+    const jobs = [];
+    for (const p of picks) {
+      const doc = docs.find(d => d.pages.contains(p));
+      if (!doc?.sourceId) throw new Error("A selected file is still processing.");
+      jobs.push({ sourceId: doc.sourceId, page: Number(p.dataset.page), raster: p.dataset.raster === "1" });
+    }
+    setStatus(`Building ZIP from ${jobs.length} verified page${jobs.length === 1 ? "" : "s"}…`);
+    const r = await fetch(apiUrl("/api/batch-zip"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobs, units: Math.min(500, Math.max(1, Number($("#units").value) || 40)) })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || "ZIP creation failed.");
+
+    const fullZipUrl = toFullUrl(d.downloadUrl);
+    window.location.href = fullZipUrl;
+    setStatus(`ZIP download started: ${d.fileCount} PLT file${d.fileCount === 1 ? "" : "s"}.`);
+  } catch (e) {
+    setStatus(`Export error: ${e.message}`);
+  } finally {
+    $("#zip").disabled = false;
+    update();
+  }
+};
+
+// Check Backend Engine Health with Cold Start Polling
+async function checkBackendHealth(retries = 3) {
+  const base = getApiBase();
+  engine.textContent = "Connecting to converter…";
+  engine.style.color = "var(--ink)";
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+      const r = await fetch(apiUrl("/api/health"), { cache: "no-store", signal: controller.signal });
+      clearTimeout(timeoutId);
+      const h = await r.json();
+
+      if (r.ok && h.ok) {
+        const engines = [];
+        if (h.pltReady) engines.push("PLT READY");
+        else engines.push("PLT ENGINE PENDING");
+        if (h.aiReady) engines.push("AI READY");
+
+        engine.textContent = `Backend · ${engines.join(" · ")}`;
+        engine.style.color = h.pltReady ? "var(--accent)" : "var(--warm)";
+        engine.title = `Backend: ${base || "same-origin"}\nGhostscript: ${h.converters?.ghostscript ? "Yes" : "No"}\npstoedit: ${h.converters?.pstoedit ? "Yes" : "No"}\nClick to change backend URL`;
+        setStatus(h.pltReady ? "Ready. PDF + AI batch conversion is online." : "Backend online, but conversion engine is missing dependencies.");
+        return;
+      }
+    } catch (e) {
+      if (attempt < retries) {
+        engine.textContent = `Waking converter (${attempt}/${retries})…`;
+        setStatus(`Starting converter backend… (waking free tier instance, please wait)`);
+        await new Promise(res => setTimeout(res, 4000));
+      }
+    }
+  }
+
+  engine.textContent = "Converter offline";
+  engine.style.color = "var(--red)";
+  engine.title = `Could not reach ${base || "backend"}. Click to change backend URL.`;
+  setStatus(`Conversion server unreachable at ${base || "origin"}. If using Render free tier, server may be waking up.`);
+}
+
+(async () => {
+  await checkBackendHealth(5);
+  update();
+})();
+</script>
+</body>
+</html>
