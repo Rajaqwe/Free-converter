@@ -1,6 +1,6 @@
-# PDF + AI → PLT Batch Cutter v17
+# PDF + AI + CDR → PLT Batch Cutter v18
 
-A public web application to preview, select, and convert multi-page **PDF** and **Adobe Illustrator (AI)** vector artwork into real **HPGL `.PLT`** cutter files individually or as a batch ZIP.
+A public web application to preview, select, and convert **PDF**, **Adobe Illustrator (AI)**, and **CorelDRAW (CDR)** artwork into **HPGL `.PLT`** cutter files individually or as a batch ZIP. The hosted CDR route uses Inkscape/libcdr where compatible. Distinct outline colours are mapped to separate HPGL pen selections for cutline/bleed workflows.
 
 - **Frontend**: Static Web Application hosted on **GitHub Pages**
 - **Backend**: Docker Web Service running **Node.js + Express**
@@ -11,35 +11,28 @@ A public web application to preview, select, and convert multi-page **PDF** and 
 ## Architecture
 
 ```text
-               PUBLIC USER
-                    │
-                    ▼
-          GitHub Pages Frontend
-             (Static HTML/JS)
-                    │
-                    │ HTTPS API Requests
-                    ▼
-          Conversion Backend
-        (Docker / Node + Express)
-                    │
-         ┌──────────┴──────────┐
-         ▼                     ▼
-    Ghostscript             pstoedit
-    (ps2write)             (-f hpgl)
-         │                     │
-         └──────────┬──────────┘
-                    ▼
-              HPGL (.PLT)
+Public user
+    ↓
+GitHub Pages frontend
+    ↓ HTTPS API request
+Node.js + Express backend
+    ├── PDF: use uploaded PDF
+    ├── AI: Ghostscript / Inkscape normalisation
+    └── CDR: Inkscape + libcdr → PDF
+    ↓
+Ghostscript (ps2write) → PostScript
+    ↓
+pstoedit HPGL driver (separate pen IDs for distinct outline colours)
+    ↓
+HPGL (.PLT)
 ```
-
----
 
 ## Conversion Pipeline
 
-1. **Upload**: User uploads `.pdf` or `.ai` via drag-and-drop or file picker.
+1. **Upload**: User uploads `.pdf`, `.ai` or `.cdr` via drag-and-drop or file picker.
 2. **Intermediate PostScript**: The backend uses Ghostscript (`-sDEVICE=ps2write`) to extract vector paths from each selected page.
-3. **Vector Extraction**: `pstoedit` translates the PostScript vector representation into genuine HPGL pen commands (`PU`, `PD`).
-4. **Verification**: The system inspects the output to ensure `PD` (pen down) drawing commands exist and that bitmap/raster images are rejected from cutting.
+3. **Vector Extraction**: `pstoedit` translates PostScript paths into HPGL commands (`PU`, `PD`) and maps distinct source outline colours to separate pen selections (`SP1`, `SP2`, etc.), up to the configured pen-colour limit.
+4. **Verification**: Lightweight analysis checks vector/raster content without generating full PLT output for every page. Actual PLT generation verifies the drawing commands.
 5. **Download**: Converted files are offered as individual `.PLT` files or packaged into a batch `.ZIP`.
 
 ---
@@ -48,7 +41,7 @@ A public web application to preview, select, and convert multi-page **PDF** and 
 
 ```text
 Free-converter/
-├── index.html              # Full v17 batch cutter UI & client logic
+├── index.html              # PDF + AI + CDR batch cutter UI & client logic
 ├── config.js               # Configurable backend API base URL
 ├── assets/
 │   └── pdfjs/              # Vendored PDF.js library & web worker
@@ -59,7 +52,7 @@ Free-converter/
 ├── backend/
 │   ├── server.js           # Production Express converter API
 │   ├── package.json        # Backend dependencies (express, archiver)
-│   ├── Dockerfile          # Linux Dockerfile with Ghostscript & pstoedit
+│   ├── Dockerfile          # Linux Dockerfile with Ghostscript, pstoedit & Inkscape
 │   ├── .dockerignore       # Build exclusion rules
 │   ├── .env.example        # Environment variable templates
 │   ├── health.html         # API landing and status page
@@ -77,6 +70,7 @@ Free-converter/
 - Node.js 18+
 - [Ghostscript](https://www.ghostscript.com/)
 - [pstoedit](http://www.pstoedit.net/)
+- [Inkscape](https://inkscape.org/) with CDR/libcdr input support (for hosted CDR import and AI fallback)
 
 ```bash
 cd backend
@@ -126,10 +120,12 @@ curl http://localhost:10000/api/health
    - **Environment / Runtime**: `Docker`
    - **Root Directory**: `backend`
    - **Instance Type**: Free or Starter
+   - For predictable first-request latency, use an always-on plan. Free services may spin down after inactivity; code changes alone cannot remove that host-level cold start.
 5. Environment Variables:
    - `PORT`: `10000`
    - `ALLOWED_ORIGINS`: `https://rajaqwe.github.io`
    - `MAX_FILE_SIZE_MB`: `50`
+   - `HPGL_MAX_PEN_COLORS`: `16` (optional; default is 16)
 6. Click **Create Web Service**.
 7. Once deployed, copy your Render URL (e.g. `https://pdf-to-plt-backend.onrender.com`).
 8. Update `config.js` with your Render URL or set `window.PLT_API_BASE_URL`.
@@ -156,6 +152,7 @@ curl http://localhost:10000/api/health
 | `HOST` | `0.0.0.0` | Network interface to bind to |
 | `ALLOWED_ORIGINS` | `https://rajaqwe.github.io` | Comma-separated list of allowed CORS origins or `*` |
 | `MAX_FILE_SIZE_MB` | `50` | Maximum upload file size in megabytes |
+| `HPGL_MAX_PEN_COLORS` | `16` | Maximum distinct source outline colours mapped to HPGL pen numbers (2–256) |
 | `TEMP_DIR` | system temp | Working directory for temporary conversion files |
 
 ---
@@ -167,7 +164,7 @@ curl http://localhost:10000/api/health
 | `GET` | `/` | API status and overview |
 | `GET` | `/api/ping` | Lightweight ping endpoint |
 | `GET` | `/api/health` | Comprehensive engine diagnostics (Ghostscript + pstoedit) |
-| `POST` | `/api/source` | Upload PDF or AI file for vector processing |
+| `POST` | `/api/source` | Upload PDF, AI or CDR file for vector processing |
 | `GET` | `/api/source/:id/pdf` | Retrieve normalized preview PDF |
 | `GET` | `/api/source/:id/analyze/:page` | Analyze page for cuttable vectors & raster blocking |
 | `GET` | `/api/source/:id/plt/:page` | Convert single page to HPGL PLT |
@@ -185,3 +182,6 @@ curl http://localhost:10000/api/health
   Ensure the backend has `ALLOWED_ORIGINS` configured to include `https://rajaqwe.github.io` or `*`.
 - **"No cuttable vector paths found"**:
   PLT files require vector linework. Bitmaps, raster images, and unstroked shapes without vector paths cannot produce HPGL plot commands.
+
+- **CDR import failures**: Inkscape/libcdr does not guarantee identical support for every CDR version or CorelDRAW effect. Re-save the file in CorelDRAW 2022 or export a vector PDF as a fallback.
+- **Colour separation**: HPGL pen IDs preserve separate colour groups, but the receiving plotter/software determines each pen's displayed or physical colour.
