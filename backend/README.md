@@ -21,7 +21,7 @@ pstoedit HPGL driver with pen-colour mapping
 HPGL (.PLT) with separate SP pen IDs
 ```
 
-
+## Running with Docker
 
 ### Build the image
 ```bash
@@ -48,7 +48,7 @@ Service will be accessible at `http://localhost:10000`.
    - `PORT`: `10000` (Render sets this automatically)
    - `ALLOWED_ORIGINS`: `https://rajaqwe.github.io`
    - `MAX_FILE_SIZE_MB`: `50`
-- `HPGL_MAX_PEN_COLORS`: `16` (source outline colours mapped to distinct HPGL pen numbers; configurable 2–256)
+   - `HPGL_MAX_PEN_COLORS`: `16` (source outline colours mapped to distinct HPGL pen numbers; configurable 2–256)
 5. Click **Create Web Service**.
 
 ## API Endpoints
