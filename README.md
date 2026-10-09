@@ -27,7 +27,7 @@ pstoedit HPGL driver (separate pen IDs for distinct outline colours)
 HPGL (.PLT)
 ```
 
-
+## Conversion Pipeline
 
 1. **Upload**: User uploads `.pdf`, `.ai` or `.cdr` via drag-and-drop or file picker.
 2. **Intermediate PostScript**: The backend uses Ghostscript (`-sDEVICE=ps2write`) to extract vector paths from each selected page.
@@ -125,6 +125,7 @@ curl http://localhost:10000/api/health
    - `PORT`: `10000`
    - `ALLOWED_ORIGINS`: `https://rajaqwe.github.io`
    - `MAX_FILE_SIZE_MB`: `50`
+   - `HPGL_MAX_PEN_COLORS`: `16` (optional; default is 16)
 6. Click **Create Web Service**.
 7. Once deployed, copy your Render URL (e.g. `https://pdf-to-plt-backend.onrender.com`).
 8. Update `config.js` with your Render URL or set `window.PLT_API_BASE_URL`.
