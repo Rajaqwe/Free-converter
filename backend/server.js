@@ -618,7 +618,7 @@ app.get("/", (req, res) => {
   const psto = !!safeEngineCall(findPstoedit);
   res.json({
     ok: true,
-    service: "pdf-ai-to-plt-backend",
+    service: "pdf-ai-cdr-to-plt-backend",
     status: gs && psto ? "operational" : "degraded",
     pltReady: gs && psto,
     health: "/api/health"
@@ -636,7 +636,7 @@ app.get("/api/health", (req, res) => {
 
     res.json({
       ok: true,
-      service: "pdf-ai-to-plt-backend",
+      service: "pdf-ai-cdr-to-plt-backend",
       pltReady,
       converters: {
         ghostscript: !!gs,
@@ -814,6 +814,7 @@ app.post("/api/batch-zip", async (req, res) => {
     const fail = err => {
       if (settled) return;
       settled = true;
+      try { archive.abort(); } catch {}
       try { output.destroy(); } catch {}
       try { fs.rmSync(zipPath, { force: true }); } catch {}
       if (!res.headersSent) res.status(500).json({ error: err.message || "ZIP archiving error" });
@@ -843,6 +844,7 @@ app.post("/api/batch-zip", async (req, res) => {
         const page = Number(job.page);
         if (!Number.isInteger(page) || page < 1) throw new Error(`Batch item ${i + 1}: invalid page.`);
         const result = await generatePlt(source, page, units);
+        if (settled) return;
         const base = safeName(source.name.replace(/\.(pdf|ai|cdr)$/i, ""));
         const name = uniqueZipName(`${base}_page_${String(page).padStart(2, "0")}.PLT`, used);
         // Append as each conversion completes instead of retaining all HPGL

@@ -211,7 +211,7 @@ button:active:not(:disabled){transform:translateY(0) scale(.985)}
   <div class="navin">
     <div class="brand">
       <div class="logo">PL</div>
-      <div><b>PDF + AI → PLT Batch Cutter</b><small>Inspect PDF / AI / CDR artwork • auto-detect cuttable vector outlines • export PLT files or ZIP</small></div>
+      <div><b>PDF + AI + CDR → PLT Batch Cutter</b><small>Inspect PDF / AI / CDR artwork • auto-detect cuttable vector outlines • export PLT files or ZIP</small></div>
     </div>
     <div class="navlinks">
       <div class="navstats" id="navStats" aria-label="Upload and page summary">
@@ -445,7 +445,7 @@ async function addFiles(files){
     setStatus("Please choose PDF, AI or CDR files.");
     return;
   }
-  if (list.children.length === 1 && list.firstElementChild.textContent.includes("No PDF or AI files")) {
+  if (list.children.length === 1 && list.firstElementChild.textContent.includes("No PDF, AI or CDR files")) {
     list.innerHTML = "";
   }
   setStatus(`Loading ${supported.length} file${supported.length === 1 ? "" : "s"}…`);
