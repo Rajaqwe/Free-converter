@@ -392,7 +392,7 @@ $("#allpdf").onclick = () => setAll(true);
 $("#auto").onclick = () => {
   document.querySelectorAll(".page").forEach(p => setPick(p, p.dataset.cut === "1"));
   update();
-  setStatus("Automatically selected every page verified to contain convertible vector geometry.");
+  setStatus("Selected pages with candidate vector outlines. Final HPGL export validates each page.");
 };
 
 $("#autoCheck").onchange = () => {
