@@ -13,6 +13,10 @@ const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, "public");
 
 const MAX_FILE_SIZE_MB = Math.max(1, Number(process.env.MAX_FILE_SIZE_MB || 50));
+const configuredPenColors = Number.parseInt(process.env.HPGL_MAX_PEN_COLORS || "16", 10);
+const HPGL_MAX_PEN_COLORS = Number.isFinite(configuredPenColors)
+  ? Math.min(256, Math.max(2, configuredPenColors))
+  : 16;
 const RUNTIME = process.env.TEMP_DIR
   ? path.resolve(process.env.TEMP_DIR, "plt_runtime")
   : path.join(ROOT, "runtime");
@@ -276,6 +280,22 @@ function isPdfBuffer(buffer) {
   return Buffer.isBuffer(buffer) && /^%PDF-/i.test(buffer.subarray(0, Math.min(32, buffer.length)).toString("latin1"));
 }
 
+function isPdfFile(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, "r");
+    const header = Buffer.alloc(8);
+    const bytesRead = fs.readSync(fd, header, 0, header.length, 0);
+    return /^%PDF-/i.test(header.subarray(0, bytesRead).toString("latin1"));
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch {}
+    }
+  }
+}
+
 function execFileAsync(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     execFile(command, args, {
@@ -308,12 +328,42 @@ async function convertAiToPdf(inputPath, outputPath) {
   throw new Error("AI files require Ghostscript or Inkscape for conversion. Service is not configured for native AI.");
 }
 
+async function convertCdrToPdf(inputPath, outputPath) {
+  const inkscape = findInkscape();
+  if (!inkscape) {
+    throw new Error("CDR import requires Inkscape with libcdr support, which is not available on this server.");
+  }
+
+  try {
+    // Export all imported pages where supported. Compatibility varies by CDR
+    // version and effects, so validate the resulting PDF below.
+    await execFileAsync(inkscape, [
+      inputPath,
+      "--export-page=all",
+      "--export-type=pdf",
+      `--export-filename=${outputPath}`
+    ], { timeout: 180000 });
+
+    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 100 && isPdfFile(outputPath)) {
+      return { engine: "Inkscape/libcdr", outputPath };
+    }
+  } catch (e) {
+    fs.rmSync(outputPath, { force: true });
+    throw new Error(`Inkscape could not import this CDR file. Try re-saving it from CorelDRAW 2022 or exporting it as PDF. Details: ${e.message}`);
+  }
+
+  fs.rmSync(outputPath, { force: true });
+  throw new Error("CDR import did not produce a valid PDF. This CDR version or one of its effects may not be supported by the hosted importer.");
+}
+
 async function makePreviewPdf(sourcePath, sourceType, outputPath) {
   if (sourceType === "PDF") {
     fs.copyFileSync(sourcePath, outputPath);
     return { engine: "Original PDF" };
   }
-  return convertAiToPdf(sourcePath, outputPath);
+  if (sourceType === "AI") return convertAiToPdf(sourcePath, outputPath);
+  if (sourceType === "CDR") return convertCdrToPdf(sourcePath, outputPath);
+  throw new Error(`Unsupported source format: ${sourceType}`);
 }
 
 function sanitizeUnits(value) {
@@ -423,8 +473,11 @@ async function pstoeditPage(source, page, unitsPerMm) {
     try {
       // Deliberately omit -xscale/-yscale. This keeps physical dimensions
       // identical whether the UI shows 40, 80, or another Units/mm value.
+      // Preserve distinct source stroke colours as separate HPGL pen selections
+      // (SP1, SP2, ...), allowing common cutline/bleed colour separations.
+      // Actual physical/display colours depend on the receiving software's pen map.
       await execFileAsync(psto, [
-        "-q", "-f", "hpgl", "-gs", gs,
+        "-q", "-f", `hpgl:-pencolors ${HPGL_MAX_PEN_COLORS}`, "-gs", gs,
         "-page", "1", tempPs, out
       ]);
       if (!fs.existsSync(out)) throw new Error("pstoedit did not generate output file.");
@@ -457,23 +510,21 @@ async function analyzePage(source, page) {
   source.analysisCache = source.analysisCache || new Map();
   if (source.analysisCache.has(page)) return source.analysisCache.get(page);
 
-  const p = await pstoeditPage(source, page, 40);
-  if (p) {
-    const drawn = hpglHasDrawing(p.hpgl);
-    const drawingCommands = (p.hpgl.match(/\bPD-?\d+,-?\d+;/gi) || []).length;
-    const blockedByRaster = !!p.hasRaster;
-    const result = { cuttable: drawn && !blockedByRaster, painted: drawingCommands, images: p.imageOps || 0, raster: blockedByRaster, engine: "pstoedit" };
-    source.analysisCache.set(page, result);
-    return result;
-  }
-  const ps = makeTempPath(".ps");
-  try {
-    await pageToPs(source, page, ps);
-    const stats = fallbackVectorStatsFromPs(fs.readFileSync(ps, "utf8"));
-    return { ...stats, engine: "Ghostscript vector analysis" };
-  } finally {
-    fs.rmSync(ps, { force: true });
-  }
+  // Page analysis only needs path/raster statistics. Avoid generating a full
+  // PLT for every page before the user selects it. The cached PostScript page
+  // is reused later by pstoedit when conversion is requested.
+  const psPath = await pageToPs(source, page, makeTempPath(".ps"));
+  const stats = fallbackVectorStatsFromPs(fs.readFileSync(psPath, "utf8"));
+  const result = {
+    ...stats,
+    painted: stats.paintOps,
+    drawingCommands: stats.pathOps,
+    images: stats.imageOps,
+    raster: stats.hasRaster,
+    engine: "Ghostscript vector analysis"
+  };
+  source.analysisCache.set(page, result);
+  return result;
 }
 
 async function generatePlt(source, page, unitsPerMm) {
@@ -593,9 +644,12 @@ app.get("/api/health", (req, res) => {
         pstoedit: !!psto,
         pstoeditPath: psto ? path.basename(psto) : null,
         inkscape: !!inkscape,
-        inkscapePath: inkscape ? path.basename(inkscape) : null
+        inkscapePath: inkscape ? path.basename(inkscape) : null,
+        cdrImporter: !!inkscape
       },
       aiReady: !!gs || !!inkscape,
+      cdrImporterReady: !!inkscape,
+      hpglMaxPenColors: HPGL_MAX_PEN_COLORS,
       platform: os.platform(),
       uptime: Math.floor(process.uptime()),
       maxFileSizeMb: MAX_FILE_SIZE_MB
@@ -624,8 +678,8 @@ app.post("/api/source", (req, res, next) => {
 }, async (req, res) => {
   try {
     const originalName = safeName(decodeHeaderName(req.get("x-file-name") || "artwork"));
-    const type = /\.ai$/i.test(originalName) ? "AI" : /\.pdf$/i.test(originalName) ? "PDF" : null;
-    if (!type) return res.status(400).json({ error: "Only .PDF and .AI files are accepted." });
+    const type = /\.cdr$/i.test(originalName) ? "CDR" : /\.ai$/i.test(originalName) ? "AI" : /\.pdf$/i.test(originalName) ? "PDF" : null;
+    if (!type) return res.status(400).json({ error: "Only .PDF, .AI and .CDR files are accepted." });
 
     const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     if (!data.length) return res.status(400).json({ error: "Uploaded file is empty." });
@@ -634,7 +688,7 @@ app.post("/api/source", (req, res, next) => {
     }
 
     const id = makeId();
-    const originalExt = type === "AI" ? ".ai" : ".pdf";
+    const originalExt = type === "CDR" ? ".cdr" : type === "AI" ? ".ai" : ".pdf";
     const originalPath = path.join(SOURCES, `${id}${originalExt}`);
     const pdfPath = path.join(SOURCES, `${id}.pdf`);
     fs.writeFileSync(originalPath, data);
@@ -716,7 +770,7 @@ app.get("/api/source/:id/plt/:page", async (req, res) => {
     }
     const units = sanitizeUnits(req.query.units);
     const result = await generatePlt(source, page, units);
-    const base = safeName(source.name.replace(/\.(pdf|ai)$/i, ""));
+    const base = safeName(source.name.replace(/\.(pdf|ai|cdr)$/i, ""));
     const name = `${base}_page_${String(page).padStart(2, "0")}.PLT`;
     const stored = storePlt(name, result.hpgl);
     // Keep the generated/cached PLT alive until the normal runtime cleanup. The cache uses temp: null.
@@ -753,7 +807,8 @@ app.post("/api/batch-zip", async (req, res) => {
     const zipId = makeId();
     const zipPath = path.join(RUNTIME, `PLT-Batch-${zipId}.zip`);
     const output = fs.createWriteStream(zipPath);
-    const archive = archiver("zip", { zlib: { level: 9 } });
+    // Speed up temporary HPGL ZIP creation; PLT is already compact vector text.
+    const archive = archiver("zip", { zlib: { level: 1 } });
 
     let settled = false;
     const fail = err => {
@@ -776,7 +831,7 @@ app.post("/api/batch-zip", async (req, res) => {
 
     const workerCount = 2;
     let nextJob = 0;
-    const converted = new Array(jobs.length);
+    const used = new Set();
 
     async function batchWorker() {
       while (true) {
@@ -788,25 +843,22 @@ app.post("/api/batch-zip", async (req, res) => {
         const page = Number(job.page);
         if (!Number.isInteger(page) || page < 1) throw new Error(`Batch item ${i + 1}: invalid page.`);
         const result = await generatePlt(source, page, units);
-        const base = safeName(source.name.replace(/\.(pdf|ai)$/i, ""));
-        converted[i] = {
-          hpgl: result.hpgl,
-          name: `${base}_page_${String(page).padStart(2, "0")}.PLT`
-        };
+        const base = safeName(source.name.replace(/\.(pdf|ai|cdr)$/i, ""));
+        const name = uniqueZipName(`${base}_page_${String(page).padStart(2, "0")}.PLT`, used);
+        // Append as each conversion completes instead of retaining all HPGL
+        // strings until the slowest conversion finishes.
+        archive.append(result.hpgl, { name });
       }
     }
 
-    await Promise.all(
-      Array.from({ length: Math.min(workerCount, jobs.length) }, () => batchWorker())
-    );
-
-    const used = new Set();
-    for (const item of converted) {
-      const entryName = uniqueZipName(item.name, used);
-      archive.append(item.hpgl, { name: entryName });
+    try {
+      await Promise.all(
+        Array.from({ length: Math.min(workerCount, jobs.length) }, () => batchWorker())
+      );
+      await archive.finalize();
+    } catch (e) {
+      fail(e);
     }
-
-    await archive.finalize();
   } catch (e) {
     if (!res.headersSent) res.status(422).json({ error: e.message || "Batch export failed." });
   }

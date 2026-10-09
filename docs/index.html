@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PDF + AI → PLT Batch Cutter v17</title>
+<title>PDF + AI + CDR → PLT Batch Cutter v18</title>
 
 <style>
 @import url('data:text/css,');
@@ -42,7 +42,7 @@ body:before{
   background-size:4px 4px;mix-blend-mode:soft-light;
 }
 .drop.over{border-color:var(--accent);box-shadow:0 0 0 1px rgba(232,255,63,.12),0 20px 80px rgba(232,255,63,.06);transform:scale(1.004)}
-body.file-dragging:after{content:"Release to add PDF + AI files";position:fixed;inset:20px;z-index:999;display:grid;place-items:center;border:2px dashed rgba(232,255,63,.65);border-radius:24px;background:rgba(8,8,7,.68);backdrop-filter:blur(5px);color:var(--ink);font-size:18px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;pointer-events:none}
+body.file-dragging:after{content:"Release to add PDF + AI + CDR files";position:fixed;inset:20px;z-index:999;display:grid;place-items:center;border:2px dashed rgba(232,255,63,.65);border-radius:24px;background:rgba(8,8,7,.68);backdrop-filter:blur(5px);color:var(--ink);font-size:18px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;pointer-events:none}
 button,input,select{font:inherit}
 button{transition:transform .35s cubic-bezier(.2,.8,.2,1),background-color .35s ease,border-color .35s ease,color .35s ease,opacity .35s ease}
 button:hover:not(:disabled){transform:translateY(-2px)}
@@ -140,7 +140,7 @@ button:active:not(:disabled){transform:translateY(0) scale(.985)}
   background:linear-gradient(90deg,rgba(255,255,255,.02),transparent)
 }
 .pdfhead b{font:600 25px/1.05 var(--sans);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.02em}
-.pdfhead small{color:#8b8981;font-size:9px;letter-spacing:.1em;text-transform:uppercase}.filetag{padding:5px 7px;border:1px solid var(--line2);border-radius:999px;color:#c7c3b8;font-size:8px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}.filetag.ai{border-color:#6b5d23;color:#eadf9d}.filetag.pdf{border-color:#3d4b50;color:#afc2c9}
+.pdfhead small{color:#8b8981;font-size:9px;letter-spacing:.1em;text-transform:uppercase}.filetag{padding:5px 7px;border:1px solid var(--line2);border-radius:999px;color:#c7c3b8;font-size:8px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}.filetag.ai{border-color:#6b5d23;color:#eadf9d}.filetag.cdr{border-color:#35684b;color:#a9ebbd}.filetag.pdf{border-color:#3d4b50;color:#afc2c9}
 .pdfaction{color:var(--accent);font-size:9px;font-weight:900;text-transform:uppercase;cursor:pointer;letter-spacing:.1em}
 .pages{padding:18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(208px,1fr));gap:14px}
 .page{
@@ -211,7 +211,7 @@ button:active:not(:disabled){transform:translateY(0) scale(.985)}
   <div class="navin">
     <div class="brand">
       <div class="logo">PL</div>
-      <div><b>PDF + AI → PLT Batch Cutter</b><small>Inspect PDF / AI artwork • auto-detect cuttable vector outlines • export PLT files or ZIP</small></div>
+      <div><b>PDF + AI → PLT Batch Cutter</b><small>Inspect PDF / AI / CDR artwork • auto-detect cuttable vector outlines • export PLT files or ZIP</small></div>
     </div>
     <div class="navlinks">
       <div class="navstats" id="navStats" aria-label="Upload and page summary">
@@ -231,10 +231,10 @@ button:active:not(:disabled){transform:translateY(0) scale(.985)}
 <main class="wrap">
 
 <section id="drop" class="drop">
-  <strong>Drop PDF + AI files here</strong>
+  <strong>Drop PDF + AI + CDR files here</strong>
   <p>Drag multiple files from Windows Explorer, or use Ctrl/Shift to select multiple files.</p>
-  <button id="choose" class="btn primary" type="button">Choose PDF + AI files</button>
-  <input id="files" type="file" accept="application/pdf,.pdf,application/illustrator,.ai" multiple hidden>
+  <button id="choose" class="btn primary" type="button">Choose PDF + AI + CDR files</button>
+  <input id="files" type="file" accept="application/pdf,.pdf,application/illustrator,.ai,.cdr" multiple hidden>
 </section>
 
 <div class="toolbar">
@@ -248,13 +248,14 @@ button:active:not(:disabled){transform:translateY(0) scale(.985)}
 <div class="settings">
   <label title="PLT output is normalized to preserve physical artwork size">Units/mm <input id="units" type="number" value="40" min="1" step="1" style="width:70px"></label>
   <label>Output <strong style="color:var(--ink);font-size:11px">.PLT / HPGL</strong></label>
+  <label>Outline colours <strong style="color:var(--ink);font-size:11px">Separate pen IDs for cutline / bleed</strong></label>
   <label class="toggle"><input id="autoCheck" type="checkbox" checked> Auto-select cuttable pages when loading</label>
   <label class="toggle"><input id="closePaths" type="checkbox" checked> Close open cutting paths where safe</label>
 </div>
 
-<div id="status" class="status">Ready. Add PDF or AI files.</div>
+<div id="status" class="status">Ready. Add PDF, AI or CDR files.</div>
 <div class="kicker" style="margin:12px 0 4px">01 — Your files</div>
-<div id="list"><div style="text-align:center;color:var(--muted);padding:55px 0">No PDF or AI files loaded yet.</div></div>
+<div id="list"><div style="text-align:center;color:var(--muted);padding:55px 0">No PDF, AI or CDR files loaded yet.</div></div>
 
 <section id="outputs" class="outputs" hidden>
   <h3>Generated files — download individually</h3>
@@ -439,9 +440,9 @@ async function registerFile(file){
 }
 
 async function addFiles(files){
-  const supported = files.filter(f => /\.(pdf|ai)$/i.test(f.name));
+  const supported = files.filter(f => /\.(pdf|ai|cdr)$/i.test(f.name));
   if (!supported.length) {
-    setStatus("Please choose PDF or AI files.");
+    setStatus("Please choose PDF, AI or CDR files.");
     return;
   }
   if (list.children.length === 1 && list.firstElementChild.textContent.includes("No PDF or AI files")) {
@@ -456,8 +457,9 @@ async function addFiles(files){
       if (i >= supported.length) return;
       const file = supported[i];
       try {
-        if (/\.ai$/i.test(file.name)) await loadSource(file, "AI");
-        else await loadSource(file, "PDF");
+        const ext = (file.name.match(/\.([^.]+)$/)?.[1] || "").toLowerCase();
+        const label = ext === "cdr" ? "CDR" : ext === "ai" ? "AI" : "PDF";
+        await loadSource(file, label);
       } catch (e) {
         setStatus(`Could not load ${file.name}: ${e.message || e}`);
       }
@@ -476,6 +478,14 @@ function createFileCard(file, label){
   return card;
 }
 
+function disposeDoc(doc) {
+  try { doc.pdf?.destroy?.(); } catch {}
+  if (doc.previewUrl) {
+    try { URL.revokeObjectURL(doc.previewUrl); } catch {}
+    doc.previewUrl = null;
+  }
+}
+
 function wireDocCard(doc){
   const { card, pages } = doc;
   card.querySelector(".pdfaction").onclick = () => {
@@ -484,6 +494,7 @@ function wireDocCard(doc){
   };
   card.querySelector("[data-remove]").onclick = () => {
     card.remove();
+    disposeDoc(doc);
     const i = docs.indexOf(doc);
     if (i >= 0) docs.splice(i, 1);
     update();
@@ -498,6 +509,7 @@ async function loadSource(file, label){
     sourceType: label,
     sourceId: null,
     pdf: null,
+    previewUrl: null,
     pageCount: 0,
     card,
     pages: card.querySelector(".pages")
@@ -507,8 +519,11 @@ async function loadSource(file, label){
 
   try {
     // Preview PDFs directly from the local File while the backend upload runs in parallel.
+    // PDF.js reads the local File through a blob URL, avoiding another full
+    // ArrayBuffer while the upload path reads the file once for the backend.
+    doc.previewUrl = label === "PDF" ? URL.createObjectURL(file) : null;
     const localPdfPromise = label === "PDF"
-      ? file.arrayBuffer().then(data => pdfjsLib.getDocument({ data: new Uint8Array(data), verbosity: 0 }).promise)
+      ? pdfjsLib.getDocument({ url: doc.previewUrl, verbosity: 0 }).promise
       : Promise.resolve(null);
 
     const uploadPromise = registerFile(file);
@@ -540,9 +555,10 @@ async function loadSource(file, label){
     }
     await Promise.all(Array.from({ length: workerCount }, pageWorker));
   } catch (e) {
+    disposeDoc(doc);
     card.querySelector("small").textContent = "Failed";
     card.classList.add("ai-failed");
-    doc.pages.innerHTML = `<div class="error"><b>Could not process this ${label} file.</b><br>${esc(e?.message || e)}<br><span style="opacity:.8">Backend with Ghostscript + pstoedit 4.x is required for conversion.</span></div>`;
+    doc.pages.innerHTML = `<div class="error"><b>Could not process this ${label} file.</b><br>${esc(e?.message || e)}<br><span style="opacity:.8">Backend with Ghostscript + pstoedit 4.x is required for PLT export; CDR import also requires Inkscape/libcdr.</span></div>`;
   }
 }
 async function analyzePage(doc, n){
@@ -764,11 +780,12 @@ async function checkBackendHealth(retries = 3) {
         if (h.pltReady) engines.push("PLT READY");
         else engines.push("PLT ENGINE PENDING");
         if (h.aiReady) engines.push("AI READY");
+        if (h.cdrImporterReady) engines.push("CDR IMPORTER");
 
         engine.textContent = `Backend · ${engines.join(" · ")}`;
         engine.style.color = h.pltReady ? "var(--accent)" : "var(--warm)";
-        engine.title = `Backend: ${base || "same-origin"}\nGhostscript: ${h.converters?.ghostscript ? "Yes" : "No"}\npstoedit: ${h.converters?.pstoedit ? "Yes" : "No"}\nClick to change backend URL`;
-        setStatus(h.pltReady ? "Ready. PDF + AI batch conversion is online." : "Backend online, but conversion engine is missing dependencies.");
+        engine.title = `Backend: ${base || "same-origin"}\nGhostscript: ${h.converters?.ghostscript ? "Yes" : "No"}\npstoedit: ${h.converters?.pstoedit ? "Yes" : "No"}\nInkscape/CDR importer: ${h.converters?.cdrImporter ? "Installed (CDR compatibility checked per file)" : "No"}\nHPGL colour pens: ${h.hpglMaxPenColors || "unknown"}\nClick to change backend URL`;
+        setStatus(h.pltReady ? (h.cdrImporterReady ? "Ready. PDF + AI + CDR conversion is online." : "Ready for PDF + AI; hosted CDR importer is unavailable.") : "Backend online, but conversion engine is missing dependencies.");
         return;
       }
     } catch (e) {
