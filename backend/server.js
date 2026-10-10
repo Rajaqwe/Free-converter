@@ -328,18 +328,23 @@ async function convertAiToPdf(inputPath, outputPath) {
   throw new Error("AI files require Ghostscript or Inkscape for conversion. Service is not configured for native AI.");
 }
 
+function isInkscapeCliOptionError(error) {
+  return /unknown option|unrecognized option|unknown argument|unrecognized argument|invalid option/i
+    .test(String(error?.message || error || ""));
+}
+
 async function convertCdrToPdf(inputPath, outputPath) {
   const inkscape = findInkscape();
   if (!inkscape) {
     throw new Error("CDR import requires Inkscape with libcdr support, which is not available on this server.");
   }
 
+  // Keep the primary command to options supported by Inkscape 1.0+.
+  // --export-page=all is intentionally omitted: it is not supported by
+  // some distro builds and is unnecessary for a normal single-page CDR.
   try {
-    // Export all imported pages where supported. Compatibility varies by CDR
-    // version and effects, so validate the resulting PDF below.
     await execFileAsync(inkscape, [
       inputPath,
-      "--export-page=all",
       "--export-type=pdf",
       `--export-filename=${outputPath}`
     ], { timeout: 180000 });
@@ -347,13 +352,41 @@ async function convertCdrToPdf(inputPath, outputPath) {
     if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 100 && isPdfFile(outputPath)) {
       return { engine: "Inkscape/libcdr", outputPath };
     }
-  } catch (e) {
-    fs.rmSync(outputPath, { force: true });
-    throw new Error(`Inkscape could not import this CDR file. Try re-saving it from CorelDRAW 2022 or exporting it as PDF. Details: ${e.message}`);
-  }
 
-  fs.rmSync(outputPath, { force: true });
-  throw new Error("CDR import did not produce a valid PDF. This CDR version or one of its effects may not be supported by the hosted importer.");
+    fs.rmSync(outputPath, { force: true });
+    throw new Error("Inkscape completed without producing a valid PDF.");
+  } catch (modernError) {
+    fs.rmSync(outputPath, { force: true });
+
+    // Inkscape 0.92 and earlier use -z/-f/-A instead of the 1.x export flags.
+    // Retry only when the failure indicates CLI incompatibility; do not rerun
+    // large or unsupported files needlessly.
+    if (!isInkscapeCliOptionError(modernError)) {
+      throw new Error(
+        `Inkscape could not import this CDR file. Try saving it from CorelDRAW in an older CDR compatibility version, or export it as PDF. Details: ${modernError.message}`
+      );
+    }
+
+    try {
+      await execFileAsync(inkscape, [
+        "-z",
+        "-f", inputPath,
+        "-A", outputPath
+      ], { timeout: 180000 });
+
+      if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 100 && isPdfFile(outputPath)) {
+        return { engine: "Inkscape/libcdr (legacy CLI)", outputPath };
+      }
+
+      fs.rmSync(outputPath, { force: true });
+      throw new Error("Legacy CLI completed without producing a valid PDF.");
+    } catch (legacyError) {
+      fs.rmSync(outputPath, { force: true });
+      throw new Error(
+        `CDR conversion failed with both Inkscape command-line formats. Modern CLI: ${modernError.message}. Legacy CLI: ${legacyError.message}. Try saving as an older CDR compatibility version or exporting PDF from CorelDRAW.`
+      );
+    }
+  }
 }
 
 async function makePreviewPdf(sourcePath, sourceType, outputPath) {
