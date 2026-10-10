@@ -96,7 +96,11 @@ button:active:not(:disabled){transform:translateY(0) scale(.985)}
 .btn.primary{background:var(--acid);border-color:var(--acid);color:#10100e}
 .btn.primary:hover{background:#fff}
 .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
-.wrap{max-width:1680px;margin:auto;padding:0 28px 90px}
+.wrap{max-width:1680px;margin:auto;padding:0 28px 140px}
+.zip-dock{position:fixed;right:24px;bottom:22px;z-index:500;display:flex;align-items:center;gap:14px;max-width:calc(100vw - 32px);padding:10px 10px 10px 16px;border:1px solid #4a4a42;border-radius:999px;background:rgba(15,15,13,.94);backdrop-filter:blur(16px);box-shadow:0 16px 50px rgba(0,0,0,.45)}
+.zip-state{max-width:240px;color:var(--muted);font-size:10px;line-height:1.35;letter-spacing:.05em}
+.zip-dock .btn{white-space:nowrap;padding:13px 18px;font-size:11px}
+.zip-dock .btn:disabled{opacity:.5}
 .drop{
   min-height:210px;margin:28px 0 18px;
   border:1px solid #403f3a;border-radius:22px;
@@ -202,6 +206,8 @@ button:active:not(:disabled){transform:translateY(0) scale(.985)}
   .navlinks{flex-wrap:wrap;justify-content:flex-end}.navstats{order:3;width:100%;justify-content:flex-end}.navin{gap:10px}.brand b{font-size:12px}
   .drop{min-height:180px}.drop strong{font-size:34px}.pages{grid-template-columns:1fr 1fr}.thumb{height:180px}
   .pdfhead{flex-wrap:wrap}.pdfhead small{order:3;width:100%}
+  .zip-dock{left:12px;right:12px;bottom:12px;flex-direction:column;align-items:stretch;gap:7px;padding:10px;border-radius:18px}
+  .zip-state{text-align:center;max-width:none}.zip-dock .btn{width:100%}
 }
 </style>
 <script src="config.js"></script>
@@ -211,19 +217,7 @@ button:active:not(:disabled){transform:translateY(0) scale(.985)}
   <div class="navin">
     <div class="brand">
       <div class="logo">PL</div>
-      <div><b>PDF + AI + CDR → PLT Batch Cutter</b><small>Inspect PDF / AI / CDR artwork • auto-detect cuttable vector outlines • export PLT files or ZIP</small></div>
-    </div>
-    <div class="navlinks">
-      <div class="navstats" id="navStats" aria-label="Upload and page summary">
-        <div class="navstat"><strong id="uploadedDocCount">0</strong><span>Uploaded Docs</span></div>
-        <div class="navstat"><strong id="allPageCount">0</strong><span>All Pages</span></div>
-        <div class="navstat"><strong id="selectedPageCount">0</strong><span>Selected</span></div>
-        <div class="navstat"><strong id="cuttablePageCount">0</strong><span>Cuttable</span></div>
-      </div>
-      <button class="btn navbtn" id="downloadsBtn">Downloads <span class="badgecount" id="downloadCount">0</span>
-        <div class="dropmenu" id="downloadMenu"></div>
-      </button>
-      <span class="btn apibadge" id="engine" title="Click to view or change backend URL">Checking converter…</span>
+      <div><b>PDF + AI + CDR → PLT Batch Cutter</b></div>
     </div>
   </div>
 </header>
@@ -236,14 +230,6 @@ button:active:not(:disabled){transform:translateY(0) scale(.985)}
   <button id="choose" class="btn primary" type="button">Choose PDF + AI + CDR files</button>
   <input id="files" type="file" accept="application/pdf,.pdf,application/illustrator,.ai,.cdr" multiple hidden>
 </section>
-
-<div class="toolbar">
-  <button class="btn" id="all">Select all pages</button>
-  <button class="btn" id="clear">Clear selection</button>
-  <button class="btn" id="auto">Auto-select cuttable outlines</button>
-  <button class="btn" id="allpdf">Select all in every file</button>
-  <button class="btn primary" id="zip">Convert selected + Download ZIP</button>
-</div>
 
 <div class="settings">
   <label title="PLT output is normalized to preserve physical artwork size">Units/mm <input id="units" type="number" value="40" min="1" step="1" style="width:70px"></label>
@@ -261,6 +247,11 @@ button:active:not(:disabled){transform:translateY(0) scale(.985)}
   <h3>Generated files — download individually</h3>
   <div id="outlist"></div>
 </section>
+
+<div class="zip-dock" id="zipDock" aria-live="polite">
+  <span class="zip-state" id="zipState">Select pages to prepare ZIP</span>
+  <button class="btn primary" id="zipDownload" type="button" disabled>Download ZIP</button>
+</div>
 </main>
 
 <script type="module">
@@ -275,9 +266,17 @@ try {
 }
 
 const $ = s => document.querySelector(s);
-const drop = $("#drop"), input = $("#files"), list = $("#list"), status = $("#status"), engine = $("#engine");
-const outBox = $("#outputs"), outList = $("#outlist"), downloadMenu = $("#downloadMenu");
-const docs = [], generated = new Map();
+const drop = $("#drop"), input = $("#files"), list = $("#list"), status = $("#status");
+const outBox = $("#outputs"), outList = $("#outlist");
+const docs = [];
+const ZIP_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+const zipDownloadButton = $("#zipDownload"), zipState = $("#zipState");
+let desiredZipKey = "";
+let zipPrepTimer = null;
+let zipBuildInFlight = null;
+let preparedZip = null;
+let zipPreparationErrorKey = "";
+let explicitZipRequestKey = "";
 
 // Production converter backend (Render). Localhost is still used automatically during local development.
 window.PLT_API_BASE_URL = window.PLT_API_BASE_URL || "https://free-converter-5j5b.onrender.com";
@@ -311,17 +310,7 @@ function esc(s){ return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&l
 function setStatus(s){ status.textContent = s; }
 
 function update(){
-  const pages = [...document.querySelectorAll(".page")];
-  const uploaded = docs.length;
-  const all = docs.reduce((sum, d) => sum + Number(d.pageCount || 0), 0);
-  const sel = pages.filter(p => p.querySelector(".pick")?.checked).length;
-  const cut = pages.filter(p => p.dataset.cut === "1").length;
-  $("#uploadedDocCount").textContent = uploaded;
-  $("#allPageCount").textContent = all;
-  $("#selectedPageCount").textContent = sel;
-  $("#cuttablePageCount").textContent = cut;
-  $("#downloadCount").textContent = generated.size;
-  renderDownloadMenu();
+  scheduleZipPreparation();
 }
 
 function setPick(card, value){
@@ -385,38 +374,14 @@ input.addEventListener("change", e => {
   input.value = "";
 });
 
-$("#all").onclick = () => setAll(true);
-$("#clear").onclick = () => setAll(false);
-$("#allpdf").onclick = () => setAll(true);
-
-$("#auto").onclick = () => {
-  document.querySelectorAll(".page").forEach(p => setPick(p, p.dataset.cut === "1"));
-  update();
-  setStatus("Selected pages with candidate vector outlines. Final HPGL export validates each page.");
-};
-
 $("#autoCheck").onchange = () => {
-  if ($("#autoCheck").checked) $("#auto").click();
-};
-
-$("#downloadsBtn").onclick = e => {
-  e.stopPropagation();
-  downloadMenu.classList.toggle("open");
-};
-
-document.addEventListener("click", () => downloadMenu.classList.remove("open"));
-
-// Interactive API Configuration dialog
-engine.onclick = () => {
-  const current = getApiBase();
-  const next = window.prompt("Converter Backend URL:\n(Leave empty to use default, or enter your Render service URL)", current);
-  if (next !== null) {
-    const trimmed = next.trim().replace(/\/+$/, "");
-    if (trimmed) localStorage.setItem("PLT_API_BASE_URL", trimmed);
-    else localStorage.removeItem("PLT_API_BASE_URL");
-    window.location.reload();
+  if ($("#autoCheck").checked) {
+    document.querySelectorAll(".page").forEach(p => setPick(p, p.dataset.cut === "1"));
+    update();
   }
 };
+
+$("#units").addEventListener("input", update);
 
 async function registerFile(file){
   const data = await file.arrayBuffer();
@@ -677,8 +642,6 @@ async function downloadOne(doc, n, button){
     button.disabled = true;
     button.textContent = "Converting…";
     const f = await makeFile(doc, n);
-    generated.set(f.id, f);
-    renderDownloadMenu();
     outBox.hidden = false;
     addOutput(f);
 
@@ -712,95 +675,229 @@ function addOutput(f){
   row.querySelector("button").onclick = () => { window.location.href = f.downloadUrl; };
 }
 
-function renderDownloadMenu(){
-  if (!generated.size) {
-    downloadMenu.innerHTML = `<div style="padding:12px;color:var(--muted);font-size:11px">No generated files yet. Use a page's Download PLT button.</div>`;
-    return;
-  }
-  const vals = [...generated.values()];
-  downloadMenu.innerHTML = vals.map(f => `<div class="menuitem"><span>${esc(f.name)}</span><button class="outbtn" data-url="${esc(f.downloadUrl)}">Download</button></div>`).join("");
-  downloadMenu.querySelectorAll("[data-url]").forEach(b => {
-    b.onclick = e => {
-      e.stopPropagation();
-      window.location.href = b.dataset.url;
+function getZipSnapshot(){
+  const picks = selected();
+  const units = Math.min(500, Math.max(1, Number($("#units").value) || 40));
+  const jobs = picks.map(card => {
+    const doc = docs.find(d => d.pages.contains(card));
+    return {
+      sourceId: doc?.sourceId || null,
+      page: Number(card.dataset.page),
+      raster: card.dataset.raster === "1"
     };
   });
+  const key = JSON.stringify({ jobs, units });
+  const ready = picks.length > 0 && jobs.every(job => !!job.sourceId && !job.raster);
+  return { picks, jobs, units, key, ready };
 }
 
-$("#zip").onclick = async () => {
-  const picks = selected();
-  if (!picks.length) {
-    setStatus("Select at least one page.");
+function updateZipDock(){
+  const snapshot = getZipSnapshot();
+  const fresh = preparedZip?.key === snapshot.key &&
+    (Date.now() - preparedZip.createdAt) < ZIP_CACHE_MAX_AGE_MS;
+
+  zipDownloadButton.disabled =
+    !snapshot.picks.length || !snapshot.ready || explicitZipRequestKey === snapshot.key;
+
+  if (!snapshot.picks.length) {
+    zipDownloadButton.textContent = "Download ZIP";
+    zipState.textContent = "Select pages to prepare ZIP";
+  } else if (!snapshot.ready) {
+    zipDownloadButton.textContent = "Download ZIP";
+    zipState.textContent = "Waiting for selected files to finish loading…";
+  } else if (fresh) {
+    zipDownloadButton.textContent = "Download ZIP (" + preparedZip.fileCount + ")";
+    zipState.textContent = "ZIP ready in background · " + preparedZip.fileCount + " file" +
+      (preparedZip.fileCount === 1 ? "" : "s");
+  } else if (explicitZipRequestKey === snapshot.key) {
+    zipDownloadButton.textContent = "Preparing ZIP…";
+    zipState.textContent = "Finishing ZIP preparation. Your download will start automatically.";
+  } else if (zipBuildInFlight?.key === snapshot.key ||
+             (zipPrepTimer !== null && desiredZipKey === snapshot.key)) {
+    zipDownloadButton.textContent = "Download ZIP";
+    zipState.textContent = "Preparing ZIP in the background…";
+  } else if (zipPreparationErrorKey === snapshot.key) {
+    zipDownloadButton.textContent = "Retry ZIP";
+    zipState.textContent = "ZIP preparation failed. Click to retry.";
+  } else {
+    zipDownloadButton.textContent = "Download ZIP";
+    zipState.textContent = "Preparing selected pages automatically in the background…";
+  }
+}
+
+function scheduleZipPreparation(){
+  const snapshot = getZipSnapshot();
+
+  if (!snapshot.picks.length || !snapshot.ready) {
+    if (desiredZipKey !== snapshot.key) {
+      if (zipPrepTimer !== null) clearTimeout(zipPrepTimer);
+      zipPrepTimer = null;
+      desiredZipKey = snapshot.key;
+      zipPreparationErrorKey = "";
+    }
+    updateZipDock();
     return;
   }
-  try {
-    $("#zip").disabled = true;
-    const jobs = [];
-    for (const p of picks) {
-      const doc = docs.find(d => d.pages.contains(p));
-      if (!doc?.sourceId) throw new Error("A selected file is still processing.");
-      jobs.push({ sourceId: doc.sourceId, page: Number(p.dataset.page), raster: p.dataset.raster === "1" });
-    }
-    setStatus(`Building ZIP from ${jobs.length} verified page${jobs.length === 1 ? "" : "s"}…`);
-    const r = await fetch(apiUrl("/api/batch-zip"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobs, units: Math.min(500, Math.max(1, Number($("#units").value) || 40)) })
-    });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(d.error || "ZIP creation failed.");
 
-    const fullZipUrl = toFullUrl(d.downloadUrl);
-    window.location.href = fullZipUrl;
-    setStatus(`ZIP download started: ${d.fileCount} PLT file${d.fileCount === 1 ? "" : "s"}.`);
+  const fresh = preparedZip?.key === snapshot.key &&
+    (Date.now() - preparedZip.createdAt) < ZIP_CACHE_MAX_AGE_MS;
+  if (fresh) {
+    desiredZipKey = snapshot.key;
+    if (zipPrepTimer !== null) clearTimeout(zipPrepTimer);
+    zipPrepTimer = null;
+    updateZipDock();
+    return;
+  }
+
+  if (zipBuildInFlight?.key === snapshot.key) {
+    desiredZipKey = snapshot.key;
+    if (zipPrepTimer !== null) clearTimeout(zipPrepTimer);
+    zipPrepTimer = null;
+    updateZipDock();
+    return;
+  }
+
+  if (desiredZipKey === snapshot.key &&
+      (zipPrepTimer !== null || zipPreparationErrorKey === snapshot.key)) {
+    updateZipDock();
+    return;
+  }
+
+  desiredZipKey = snapshot.key;
+  zipPreparationErrorKey = "";
+  if (zipPrepTimer !== null) clearTimeout(zipPrepTimer);
+  zipPrepTimer = setTimeout(() => {
+    zipPrepTimer = null;
+    const current = getZipSnapshot();
+    if (current.key !== snapshot.key || !current.ready) {
+      scheduleZipPreparation();
+      return;
+    }
+    ensureZipReady(snapshot).catch(() => {});
+  }, 1200);
+  updateZipDock();
+}
+
+function ensureZipReady(snapshot){
+  const fresh = preparedZip?.key === snapshot.key &&
+    (Date.now() - preparedZip.createdAt) < ZIP_CACHE_MAX_AGE_MS;
+  if (fresh) return Promise.resolve(preparedZip);
+  if (zipBuildInFlight?.key === snapshot.key) return zipBuildInFlight.promise;
+
+  zipPreparationErrorKey = "";
+  const entry = { key: snapshot.key, promise: null };
+  entry.promise = (async () => {
+    try {
+      const r = await fetch(apiUrl("/api/batch-zip"), {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobs: snapshot.jobs,
+          units: snapshot.units
+        })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "ZIP creation failed.");
+      if (!d.downloadUrl) throw new Error("ZIP was created but no download link was returned.");
+
+      const result = {
+        key: snapshot.key,
+        downloadUrl: toFullUrl(d.downloadUrl),
+        fileCount: Number(d.fileCount ?? snapshot.jobs.length),
+        createdAt: Date.now()
+      };
+      if (desiredZipKey === snapshot.key && getZipSnapshot().key === snapshot.key) {
+        preparedZip = result;
+        zipPreparationErrorKey = "";
+      }
+      return result;
+    } catch (e) {
+      if (desiredZipKey === snapshot.key && getZipSnapshot().key === snapshot.key) {
+        zipPreparationErrorKey = snapshot.key;
+      }
+      throw e;
+    } finally {
+      if (zipBuildInFlight === entry) zipBuildInFlight = null;
+      updateZipDock();
+    }
+  })();
+  zipBuildInFlight = entry;
+  updateZipDock();
+  return entry.promise;
+}
+
+zipDownloadButton.onclick = async () => {
+  const snapshot = getZipSnapshot();
+  if (!snapshot.picks.length) return;
+  if (!snapshot.ready) {
+    setStatus("Please wait until the selected files finish processing.");
+    return;
+  }
+
+  if (zipPrepTimer !== null) clearTimeout(zipPrepTimer);
+  zipPrepTimer = null;
+  desiredZipKey = snapshot.key;
+  explicitZipRequestKey = snapshot.key;
+  zipPreparationErrorKey = "";
+  updateZipDock();
+
+  try {
+    const zip = await ensureZipReady(snapshot);
+    window.location.href = zip.downloadUrl;
+    setStatus("ZIP download started: " + zip.fileCount + " PLT file" +
+      (zip.fileCount === 1 ? "" : "s") + ".");
   } catch (e) {
-    setStatus(`Export error: ${e.message}`);
+    setStatus("ZIP export error: " + (e.message || e));
+    zipState.textContent = "ZIP preparation failed. Click to retry.";
   } finally {
-    $("#zip").disabled = false;
-    update();
+    explicitZipRequestKey = "";
+    updateZipDock();
   }
 };
 
 // Check Backend Engine Health with Cold Start Polling
 async function checkBackendHealth(retries = 3) {
   const base = getApiBase();
-  engine.textContent = "Connecting to converter…";
-  engine.style.color = "var(--ink)";
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 12000);
-      const r = await fetch(apiUrl("/api/health"), { cache: "no-store", signal: controller.signal });
-      clearTimeout(timeoutId);
-      const h = await r.json();
+      let r;
+      try {
+        r = await fetch(apiUrl("/api/health"), {
+          cache: "no-store",
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      const h = await r.json().catch(() => ({}));
 
       if (r.ok && h.ok) {
-        const engines = [];
-        if (h.pltReady) engines.push("PLT READY");
-        else engines.push("PLT ENGINE PENDING");
-        if (h.aiReady) engines.push("AI READY");
-        if (h.cdrImporterReady) engines.push("CDR IMPORTER");
-
-        engine.textContent = `Backend · ${engines.join(" · ")}`;
-        engine.style.color = h.pltReady ? "var(--accent)" : "var(--warm)";
-        engine.title = `Backend: ${base || "same-origin"}\nGhostscript: ${h.converters?.ghostscript ? "Yes" : "No"}\npstoedit: ${h.converters?.pstoedit ? "Yes" : "No"}\nInkscape/CDR importer: ${h.converters?.cdrImporter ? "Installed (CDR compatibility checked per file)" : "No"}\nHPGL colour pens: ${h.hpglMaxPenColors || "unknown"}\nClick to change backend URL`;
-        setStatus(h.pltReady ? (h.cdrImporterReady ? "Ready. PDF + AI + CDR conversion is online." : "Ready for PDF + AI; hosted CDR importer is unavailable.") : "Backend online, but conversion engine is missing dependencies.");
+        if (h.pltReady) {
+          setStatus(h.cdrImporterReady
+            ? "Converter ready. Select pages; ZIP preparation starts in the background."
+            : "Converter ready for PDF + AI; hosted CDR importer is unavailable.");
+        } else {
+          setStatus("Backend online, but conversion engine dependencies are missing.");
+        }
         return;
       }
-    } catch (e) {
+      if (!r.ok && attempt === retries) {
+        setStatus("Converter health check failed at " + (base || "origin") + ".");
+      }
+    } catch {
       if (attempt < retries) {
-        engine.textContent = `Waking converter (${attempt}/${retries})…`;
-        setStatus(`Starting converter backend… (waking free tier instance, please wait)`);
+        setStatus("Starting converter backend… (the free-tier instance may be waking up)");
         await new Promise(res => setTimeout(res, 4000));
       }
     }
   }
 
-  engine.textContent = "Converter offline";
-  engine.style.color = "var(--red)";
-  engine.title = `Could not reach ${base || "backend"}. Click to change backend URL.`;
-  setStatus(`Conversion server unreachable at ${base || "origin"}. If using Render free tier, server may be waking up.`);
+  setStatus("Conversion server unreachable at " + (base || "origin") +
+    ". The backend may be waking up; wait a moment and retry.");
 }
 
 (async () => {
